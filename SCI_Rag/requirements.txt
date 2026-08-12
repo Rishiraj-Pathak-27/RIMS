@@ -1,0 +1,5 @@
+pandas
+ollama
+pinecone
+python-dotenv
+google-genai
