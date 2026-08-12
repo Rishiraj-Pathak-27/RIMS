@@ -4,6 +4,18 @@ Enterprise Machine Learning models for real-time supply chain risk classificatio
 
 ---
 
+## Project Vision & What the Engine Detects
+
+### 1. Aim of the ML Engine
+The primary aim of `supply-chain-ml-models` is to provide lightweight, low-latency, real-time machine learning inference routines that can be embedded into supply chain backend APIs, streaming pipelines, or standalone interactive testing tools.
+
+### 2. What the Models Detect
+- 🚚 **Delivery Delay Risk**: Predicts shipping delays before dispatch based on 18 order parameters using `RandomForestClassifier`.
+- ⚠️ **Operational & Financial Anomalies**: Unsupervised `IsolationForest` flags unusual supplier defect rates, profit margin collapses, processing bottlenecks, and shipping cost anomalies.
+- 📈 **Demand Volatility**: Autoregressive `RandomForestRegressor` forecasts upcoming monthly unit demand using 3-month lag features ($t-1, t-2, t-3$).
+
+---
+
 ## Machine Learning Models Architecture
 
 This module contains three serialized, production-trained scikit-learn models:
@@ -96,6 +108,16 @@ When integrated with the FastAPI backend (`Final_App/Backend`):
 2. **In-Memory Prediction Execution**: `ml_handler.py` invokes `predict_supply_chain_risk()` and `predict_demand()` concurrently.
 3. **Rolling Lag Maintenance**: Demand forecasts dynamically consume updated rolling order volumes.
 4. **SSE EventStream Emission**: Live predictions are pushed to React frontend charts (`forecast-chart.tsx`, `risk-chart.tsx`) in real time.
+
+---
+
+## Frequently Asked Questions (Q&A)
+
+### Q1: Why use an unsupervised Isolation Forest for Anomaly Detection?
+**Answer**: Real-world supply chains experience novel operational failures (e.g. sudden shipping cost anomalies, unexpected supplier defect spikes) that are not labeled in historical training data. `IsolationForest` detects anomalies by measuring how quickly feature points isolate, identifying outliers without requiring prior failure labels.
+
+### Q2: How does `predict.py` load models efficiently?
+**Answer**: `predict.py` uses dynamic relative path resolution (`os.path.abspath(__file__)`) to load `.pkl` artifacts lazily. When called inside FastAPI (`ml_handler.py`), models are loaded once into memory (Singleton pattern) to ensure sub-millisecond inference times during 10-second streaming ticks.
 
 ---
 
