@@ -49,7 +49,7 @@ flowchart TB
 
         subgraph AI_RAG["AI & RAG Engine"]
             AI_Handler["ai_handler.py (Gemini + OpenAI)"]
-            RAG_Handler["rag_handler.py (ChromaDB)"]
+            RAG_Handler["rag_handler.py (Pinecone VDB)"]
         end
     end
 
