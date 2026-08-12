@@ -21,7 +21,7 @@ RIMS continuously monitors supply chain transactions and automatically detects:
 
 ---
 
-## Architecture Overview
+## System Architecture Overview
 
 ```mermaid
 flowchart TB
@@ -227,6 +227,58 @@ sequenceDiagram
 
 ---
 
+## Python ML API & Manual Testing
+
+### 1. Programmatic Python Inference (`predict.py`)
+
+You can run predictions directly via Python script:
+
+```python
+from supply_chain_ml_models.predict import predict_supply_chain_risk, predict_demand
+
+# Risk & Anomaly Inference
+order_data = {
+    "product_id": 365,
+    "customer_id": 2,
+    "customer_segment": "Consumer",
+    "sales": 119.98,
+    "quantity": 2,
+    "shipping_mode": "Standard Class",
+    "market": "LATAM",
+    "lead_time": 10,
+    "avg_order_value_30d": 119.98,
+    "num_orders_30d": 1,
+    "is_high_value": 0,
+    "is_bulk_order": 0,
+    "day_of_week": 3,
+    "month": 1,
+    "quarter": 1,
+    "year": 2017,
+    "department": "Technology",
+    "class": "Regular Air",
+    "profit": 20.0,
+    "order_processing_days": 2,
+    "avg_lead_time_by_mode": 10.0,
+    "avg_shipping_cost": 5.0,
+    "avg_defect_rate": 1.0,
+    "max_defect_rate": 2.0,
+    "profit_margin": 0.17
+}
+
+risk_result = predict_supply_chain_risk(order_data)
+print("Risk Analysis Result:", risk_result)
+
+# Demand Forecasting Inference
+demand_result = predict_demand(lag_1=4675, lag_2=4146, lag_3=4823, month=10)
+print("Predicted Monthly Demand Units:", demand_result)
+```
+
+### 2. Interactive Gradio Interface (`/model/test/`)
+- Operations staff and developers can access the embedded GUI directly at `http://localhost:8000/model/test/`.
+- Allows manual entry of custom order parameters to test edge cases, simulate anomalies, and observe risk classification outputs.
+
+---
+
 ## Frequently Asked Questions (Q&A)
 
 ### Q1: What is the primary aim of the RIMS project?
@@ -255,12 +307,12 @@ Delivery risk carries a 60% weight because fulfillment delays directly impact cu
 ### Q6: What is the purpose of the AI RAG Assistant?
 **Answer**: The AI RAG (Retrieval-Augmented Generation) assistant enables operations teams to interact with supply chain data using natural language. It indexes operational documentation into ChromaDB and uses Google Gemini (or OpenAI) to answer complex diagnostic questions about inventory levels, risk scores, and carrier performance.
 
-### Q7: Can developers or logistics staff test custom inputs manually?
-**Answer**: Yes! An interactive Gradio GUI is embedded directly at `http://localhost:8000/model/test/`. Operations teams can manually enter custom order parameters to test edge cases, simulate anomalies, and verify risk outputs in real time.
+### Q7: How can developers or logistics staff test custom inputs manually?
+**Answer**: By visiting the interactive Gradio GUI embedded directly at `http://localhost:8000/model/test/`.
 
 ---
 
-## Detailed Directory & Component Structure
+## Unified Directory Structure
 
 ```
 .
@@ -311,14 +363,14 @@ Delivery risk carries a 60% weight because fulfillment delays directly impact cu
 │   │   └── demand_forecast_features.pkl# Feature list definition metadata
 │   ├── app.py                          # Gradio UI mounted at /model/test/ on FastAPI
 │   ├── predict.py                      # Core inference routines & wrapper functions
-│   ├── requirements.txt
-│   └── README.md
-└── DataSets/                           # Cleaned CSV datasets & Databricks SQL notebooks
+│   └── requirements.txt
+├── DataSets/                           # Cleaned CSV datasets & Databricks SQL notebooks
+└── README.md                           # Single Master Documentation File
 ```
 
 ---
 
-## API Endpoints Reference
+## Complete API Endpoints Reference
 
 ### Health & Pipeline Status
 | Method | Endpoint | Description |
