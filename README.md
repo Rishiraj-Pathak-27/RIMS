@@ -1,6 +1,6 @@
 # RIMS — Real-Time Inventory & Supply Chain Intelligence System
 
-**RIMS** (Real-Time Inventory Monitoring System) is an enterprise-grade, Databricks-backed supply chain analytics and machine learning platform. It combines live Databricks Gold-layer analytics, real-time machine learning inference (risk classification, anomaly detection, and demand forecasting), an automated 10-second live data injection streaming pipeline via Server-Sent Events (SSE), an interactive Gradio model testing interface, and an AI-powered RAG (Retrieval-Augmented Generation) assistant.
+**RIMS** (Real-Time Inventory Monitoring System) is an enterprise-grade, Databricks-backed supply chain analytics and machine learning platform. It combines live Databricks Gold-layer analytics, real-time multi-model machine learning inference (delivery risk classification, isolation forest anomaly detection, and autoregressive demand forecasting), an automated 10-second live data injection streaming pipeline via Server-Sent Events (SSE), an interactive Gradio model testing interface, and an AI-powered RAG (Retrieval-Augmented Generation) assistant.
 
 ---
 
@@ -64,6 +64,152 @@ flowchart TB
 
 ---
 
+## Machine Learning Architecture & Models Deep Dive
+
+RIMS utilizes **three specialized scikit-learn Machine Learning models** working in tandem to provide real-time operational risk assessment, anomaly detection, and demand forecasting.
+
+```mermaid
+flowchart LR
+    subgraph Input["Input Data Stream / Payload"]
+        OrderData["Order Features\n(Sales, Shipping Mode, Lead Time, etc.)"]
+        FinancialData["Operational Metrics\n(Profit, Defect Rate, Margin, Costs)"]
+        LagData["Historical Lags\n(lag_1, lag_2, lag_3, month)"]
+    end
+
+    subgraph Models["Scikit-Learn Models"]
+        Model1["1. Delivery Delay Classifier\n(RandomForestClassifier)"]
+        Model2["2. Anomaly Detector\n(IsolationForest)"]
+        Model3["3. Demand Forecaster\n(RandomForestRegressor)"]
+    end
+
+    subgraph Preprocessing["Pipeline & Scalers"]
+        Prep1["ColumnTransformer\n(delivery_preprocessor.pkl)"]
+        Prep2["StandardScaler + MinMaxScaler\n(anomaly_scaler & risk_scaler)"]
+    end
+
+    subgraph Outputs["Inference Results"]
+        Out1["Delivery Risk Score (0-100%)"]
+        Out2["Anomaly Risk Score & Classification"]
+        Out3["Predicted Demand Units"]
+        Score["Composite Supply Chain Risk Score\n60% Delivery Risk + 40% Anomaly Risk"]
+    end
+
+    OrderData --> Prep1 --> Model1 --> Out1
+    FinancialData --> Prep2 --> Model2 --> Out2
+    LagData --> Model3 --> Out3
+    Out1 --> Score
+    Out2 --> Score
+```
+
+### 1. Delivery Delay Prediction Model
+- **Algorithm**: `RandomForestClassifier` (Ensemble of Decision Trees) + `ColumnTransformer`.
+- **Purpose**: Estimates the exact percentage probability that a given shipment order will experience a delivery delay.
+- **Input Features (18 Parameters)**:
+  - `product_id`, `customer_id`, `customer_segment` (Consumer, Corporate, Home Office)
+  - `sales`, `quantity`, `shipping_mode` (Standard Class, First Class, Same Day, Second Class), `market` (LATAM, Europe, US, Asia Pacific)
+  - `lead_time`, `avg_order_value_30d`, `num_orders_30d`, `is_high_value`, `is_bulk_order`
+  - `day_of_week`, `month`, `quarter`, `year`, `department`, `class`
+- **Preprocessing Pipeline**:
+  - `delivery_preprocessor.pkl`: Encodes categorical variables (one-hot / ordinal) and scales numerical inputs to align with training distributions.
+- **Output**: `delivery_risk` percentage ($0.0\% - 100.0\%$).
+
+### 2. Operational Anomaly Detection Model
+- **Algorithm**: `IsolationForest` + `StandardScaler` (`anomaly_scaler.pkl`) + `MinMaxScaler` (`anomaly_risk_scaler.pkl`).
+- **Purpose**: Detects unusual operational patterns, fraud spikes, cost deviations, or abnormal defect rates in real-time order data.
+- **Input Features (7 Operational Metrics)**:
+  - `profit`, `order_processing_days`, `avg_lead_time_by_mode`
+  - `avg_shipping_cost`, `avg_defect_rate`, `max_defect_rate`, `profit_margin`
+- **Preprocessing & Normalization**:
+  1. `StandardScaler` normalizes inputs to zero mean and unit variance ($\mu=0, \sigma=1$).
+  2. `IsolationForest` computes isolation path lengths to partition feature space and calculate an anomaly decision score.
+  3. `MinMaxScaler` maps the raw decision score into a standardized `anomaly_risk` score ($0.0 - 100.0$).
+- **Outputs**:
+  - `anomaly_prediction`: `"Normal"` vs `"Anomaly"`
+  - `anomaly_score`: Raw decision function output.
+  - `anomaly_risk`: Normalized risk score ($0.0\% - 100.0\%$).
+
+### 3. Demand Forecasting Model
+- **Algorithm**: `RandomForestRegressor`.
+- **Purpose**: Predicts upcoming monthly product demand to prevent stockouts and overstocking.
+- **Input Features (Autoregressive Lags)**:
+  - `lag_1`: Total demand in the previous month ($t-1$)
+  - `lag_2`: Total demand 2 months prior ($t-2$)
+  - `lag_3`: Total demand 3 months prior ($t-3$)
+  - `month`: Target projection month ($1 - 12$)
+- **Output**: `predicted_demand` (Continuous expected unit volume).
+
+### 4. Composite Supply Chain Risk Formula
+RIMS combines **Delivery Risk** and **Anomaly Risk** into a single actionable operational metric:
+
+$$\text{Supply Chain Risk Score} = (0.60 \times \text{Delivery Risk}) + (0.40 \times \text{Anomaly Risk})$$
+
+#### Risk Categorization Matrix
+| Risk Score Range | Category | Action Required |
+|------------------|----------|-----------------|
+| **$0.0 - 24.9$** | `Low` | Standard processing; optimal operations |
+| **$25.0 - 59.9$** | `Medium` | Flagged for monitoring; minor lead time buffer applied |
+| **$60.0 - 100.0$** | `High` | Immediate operational intervention; carrier reassignment / priority audit |
+
+---
+
+## Real-Time Live Data Injection & Prediction Pipeline
+
+The **Live Data Injection Pipeline** is an automated asynchronous background engine (`live_data_injection_pipeline/`) running inside FastAPI. It simulates real-time supply chain telemetry and streams live predictions to the dashboard every 10 seconds.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant DataGen as data_generator.py
+    participant Engine as stream_engine.py (10s Tick)
+    participant ML as ml_handler.py
+    participant Router as stream_router.py (SSE)
+    participant UI as React Frontend (pipeline.ts)
+
+    Loop Every 10 Seconds
+        Engine->>DataGen: Generate synthetic order payload (with controlled ~10% anomaly noise)
+        DataGen-->>Engine: Return Order Dict (sales, lead_time, profit, defect_rate, etc.)
+        
+        Engine->>ML: predict_supply_chain_risk(order_data)
+        ML-->>Engine: Return {delivery_risk, anomaly_risk, supply_chain_risk, category}
+        
+        Engine->>ML: predict_demand(lag_1, lag_2, lag_3, month)
+        ML-->>Engine: Return predicted_demand value
+        
+        Engine->>Engine: Store tick payload in rolling memory buffer (Last 30 ticks)
+        Engine->>Router: Broadcast JSON payload to active SSE queues
+        Router-->>UI: Stream EventStream event data over HTTP GET /api/pipeline/stream
+        UI->>UI: Update Recharts graphs, Risk Gauge meters, & Live Feed tables in real-time
+    End
+```
+
+### How Live Predictions Work Step-by-Step
+
+1. **Autonomous Tick Loop (`stream_engine.py`)**:
+   - An asynchronous task starts upon FastAPI initialization (`@app.on_event("startup")`).
+   - Every **10 seconds**, it executes a complete inference and broadcast cycle.
+
+2. **Synthetic Order Generation (`data_generator.py`)**:
+   - Generates realistic order data covering random customer segments, shipping modes, and markets.
+   - Includes controlled noise injection (~10% probability of high defect rates, long lead times, or margin drops to simulate real-world supply chain anomalies).
+
+3. **Concurrent Model Inference (`ml_handler.py`)**:
+   - **Risk & Anomaly Engine**: Invokes `predict_supply_chain_risk()` to process the order features through `delivery_preprocessor.pkl`, `delivery_delay_model.pkl`, `anomaly_scaler.pkl`, `anomaly_detection_model.pkl`, and `anomaly_risk_scaler.pkl`.
+   - **Demand Engine**: Invokes `predict_demand()` using rolling demand lag windows (`lag_1`, `lag_2`, `lag_3`).
+
+4. **Rolling Memory Buffer**:
+   - Maintains a rolling queue of the **last 30 ticks** (~5 minutes of live telemetry) in memory.
+   - When a new browser client connects, `GET /api/pipeline/stream` instantly sends the historical buffer first, ensuring charts are populated immediately without waiting for the next tick.
+
+5. **Server-Sent Events (SSE) Streaming (`stream_router.py`)**:
+   - Utilizes `Starlette.responses.StreamingResponse` with `media_type="text/event-stream"`.
+   - Emits structured JSON events directly to connected frontend clients.
+
+6. **Dynamic UI Rendering (`Frontend/src/services/pipeline.ts`)**:
+   - React components listen to the SSE connection using standard `EventSource`.
+   - Real-time risk line charts (`risk-chart.tsx`), demand forecasting charts (`forecast-chart.tsx`), and active risk breakdown cards automatically update without page refreshes.
+
+---
+
 ## Detailed Directory & Component Structure
 
 ```
@@ -100,59 +246,25 @@ flowchart TB
 │       │   │   ├── ml.ts               # REST client for ML prediction endpoints
 │       │   │   ├── pipeline.ts         # SSE EventSource listener for live pipeline
 │       │   │   └── ...
+│       │   ├── store/                  # Zustand global state stores
+│       │   └── routes/                 # React TanStack router views
 │       ├── package.json
 │       └── vite.config.ts
-├── supply-chain-ml-models/             # Machine Learning Repository
+├── supply-chain-ml-models/             # Machine Learning Engine & Model Artifacts
 │   ├── models/                         # Serialized scikit-learn model artifacts (.pkl)
 │   │   ├── delivery_delay_model.pkl    # RandomForestClassifier for delivery delays
-│   │   ├── delivery_preprocessor.pkl # ColumnTransformer preprocessor
-│   │   ├── anomaly_detection_model.pkl# IsolationForest for supply chain anomalies
-│   │   ├── anomaly_scaler.pkl         # StandardScaler for numerical features
-│   │   ├── anomaly_risk_scaler.pkl    # MinMaxScaler for anomaly risk normalization
-│   │   └── demand_forecasting_model.pkl # RandomForestRegressor for monthly demand
+│   │   ├── delivery_preprocessor.pkl   # ColumnTransformer preprocessor
+│   │   ├── anomaly_detection_model.pkl # IsolationForest for supply chain anomalies
+│   │   ├── anomaly_scaler.pkl          # StandardScaler for numerical features
+│   │   ├── anomaly_risk_scaler.pkl     # MinMaxScaler for anomaly risk normalization
+│   │   ├── demand_forecasting_model.pkl# RandomForestRegressor for monthly demand
+│   │   └── demand_forecast_features.pkl# Feature list definition metadata
 │   ├── app.py                          # Gradio UI mounted at /model/test/ on FastAPI
-│   ├── predict.py                      # Core inference routines
-│   └── requirements.txt
-└── DataSets/                           # Cleaned CSV datasets & notebook resources
+│   ├── predict.py                      # Core inference routines & wrapper functions
+│   ├── requirements.txt
+│   └── README.md
+└── DataSets/                           # Cleaned CSV datasets & Databricks SQL notebooks
 ```
-
----
-
-## Key Modules & Responsibilities
-
-### 1. Machine Learning Engine (`supply-chain-ml-models` & `Backend/ml_handler.py`)
-- **Delivery Risk Classifier**: Predicts probability of delivery delay based on 18 order parameters (sales, shipping mode, market, lead time, customer segment, etc.) using `RandomForestClassifier`.
-- **Anomaly Detection System**: Evaluates order data for operational anomalies (spikes in defect rate, shipping costs, profit margin deviations) using `IsolationForest` combined with `StandardScaler` and `MinMaxScaler`.
-- **Demand Forecaster**: Uses `RandomForestRegressor` trained on historical monthly demand lag features (`lag_1`, `lag_2`, `lag_3`, `month`) to project future product demand.
-- **Data Frame Wrapping**: `ml_handler.py` wraps incoming dictionary inputs into `pandas.DataFrame` structures with exact feature column names to eliminate scikit-learn feature name warnings.
-
-### 2. Live Data Injection Pipeline (`Backend/live_data_injection_pipeline/`)
-- **`data_generator.py`**: Simulates realistic supply chain order transactions with controlled randomness across segments (Consumer, Corporate, Home Office), shipping modes, markets, lead times, and defect rates (~10% controlled anomaly injection).
-- **`stream_engine.py`**: Background asynchronous task running every 10 seconds. On each tick:
-  1. Generates a fresh simulated order.
-  2. Executes risk classification and anomaly detection.
-  3. Generates demand lag features and runs demand forecasting.
-  4. Stores results in a rolling history window (last 30 ticks).
-  5. Broadcasts combined JSON payloads to all connected SSE clients.
-- **`stream_router.py`**: Exposes `GET /api/pipeline/stream` via `StreamingResponse` (Server-Sent Events) and provides initial history bursts so frontend charts display historical trends immediately upon connection.
-
-### 3. Gradio Model Testing Interface (`/model/test`)
-- **Mounted Route**: `http://localhost:8000/model/test/`
-- **Purpose**: Provides a full, standalone interactive GUI embedded directly inside the FastAPI backend.
-- Allows operations teams and developers to manually input custom order data, test edge-case inputs, and view risk scores and demand predictions in real time.
-
-### 4. Databricks Analytics Integration (`Backend/databricks_client.py` & `databricks_analytics.py`)
-- Connects securely to a Databricks SQL Warehouse via `databricks-sql-connector`.
-- Queries Gold-layer analytical tables:
-  - `gold_sales_ml_clean`
-  - `gold_inventory_features`
-  - `gold_delivery_features`
-- Features automatic in-memory caching with configurable TTL (`DATABRICKS_CACHE_TTL_SECONDS`).
-- Transforms raw SQL rows into camelCase JSON contracts expected by the React frontend components.
-
-### 5. Multi-Model AI & Document RAG Assistant (`Backend/ai_handler.py` & `rag_handler.py`)
-- **LLM Handler**: Supports multi-model inference (Google Gemini primary, OpenAI fallback).
-- **Vector Search RAG**: Uses `ChromaDB` with `all-MiniLM-L6-v2` embeddings to index operational documentation (`.txt`, `.md`) and retrieve relevant context for AI assistant user queries (`POST /query`).
 
 ---
 
@@ -172,7 +284,7 @@ flowchart TB
 | `POST` | `/api/ml/predict-risk` | Calculate delivery risk, anomaly prediction, and overall supply chain risk |
 | `POST` | `/api/ml/predict-demand` | Predict monthly demand from lag inputs (`lag_1`, `lag_2`, `lag_3`, `month`) |
 | `GET` | `/api/pipeline/stream` | Server-Sent Events (SSE) stream emitting ML predictions every 10s |
-| `GET` | `/api/pipeline/history/risk` | Fetch recent risk prediction history |
+| `GET` | `/api/pipeline/history/risk` | Fetch recent risk prediction history (30-tick rolling buffer) |
 | `GET` | `/api/pipeline/history/demand` | Fetch recent demand forecasting history |
 | `GET` | `/model/test/` | Interactive Gradio UI for manual ML model testing |
 

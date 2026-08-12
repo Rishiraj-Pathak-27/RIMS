@@ -1,54 +1,105 @@
-# Supply Chain ML Models
+# Supply Chain Machine Learning Engine (`supply-chain-ml-models`)
 
-Machine Learning models for supply chain risk analysis.
+Enterprise Machine Learning models for real-time supply chain risk classification, operational anomaly detection, and autoregressive demand forecasting.
 
-## Models
+---
 
-This repository contains three trained ML components:
+## Machine Learning Models Architecture
 
-### 1. Delivery Delay Prediction
+This module contains three serialized, production-trained scikit-learn models:
 
-Random Forest Classifier used to estimate the probability that an order will be delivered late.
+```mermaid
+flowchart TD
+    subgraph Inputs["Inference Inputs"]
+        OrderFeats["18 Order & Shipping Features\n(Sales, Mode, Market, Lead Time, etc.)"]
+        OpFeats["7 Operational Metrics\n(Profit, Defect Rates, Shipping Cost, Margin)"]
+        LagFeats["4 Demand Lags\n(lag_1, lag_2, lag_3, month)"]
+    end
 
-Output:
+    subgraph Models["ML Inference Engine (predict.py)"]
+        DelivModel["1. Delivery Delay Model\nRandomForestClassifier"]
+        AnomModel["2. Anomaly Detection Model\nIsolationForest"]
+        DemandModel["3. Demand Forecasting Model\nRandomForestRegressor"]
+    end
 
-- `delivery_risk`
+    subgraph Scalers["Preprocessors & Scalers"]
+        DelivPrep["delivery_preprocessor.pkl\nColumnTransformer"]
+        AnomScaler["anomaly_scaler.pkl (StandardScaler)\nanomaly_risk_scaler.pkl (MinMaxScaler)"]
+    end
 
-### 2. Anomaly Detection
+    subgraph Output["Predictions & Risk"]
+        DeliveryRisk["Delivery Risk Score (0-100%)"]
+        AnomalyRisk["Anomaly Risk Score & Category"]
+        DemandPred["Predicted Monthly Demand"]
+        CompositeRisk["Composite Supply Chain Risk Score\n(60% Delivery + 40% Anomaly)"]
+    end
 
-Isolation Forest used to identify unusual supply-chain orders.
-
-Outputs:
-
-- `anomaly_prediction`
-- `anomaly_score`
-- `anomaly_risk`
-
-### 3. Demand Forecasting
-
-Random Forest Regressor used to forecast monthly demand using historical demand features.
-
-Output:
-
-- `predicted demand`
-
-## Supply Chain Risk
-
-Delivery Risk and Anomaly Risk are combined to generate an overall Supply Chain Risk Score.
-
-The final risk score is calculated using:
-
-```text
-Supply Chain Risk = 60% Delivery Risk + 40% Anomaly Risk
+    OrderFeats --> DelivPrep --> DelivModel --> DeliveryRisk
+    OpFeats --> AnomScaler --> AnomModel --> AnomalyRisk
+    LagFeats --> DemandModel --> DemandPred
+    DeliveryRisk --> CompositeRisk
+    AnomalyRisk --> CompositeRisk
 ```
 
-Risk categories:
+---
 
-- Low: score < 25
-- Medium: score 25–60
-- High: score > 60
+## Model Specifications & Inner Workings
 
-## Usage
+### 1. Delivery Delay Prediction (`RandomForestClassifier`)
+- **Artifacts**: `models/delivery_delay_model.pkl`, `models/delivery_preprocessor.pkl`
+- **Algorithm**: `RandomForestClassifier` with balanced class weights and decision tree bagging ensemble.
+- **Preprocessing**: `ColumnTransformer` handles categorical encoding (One-Hot / Ordinal) and numerical normalization across 18 feature dimensions.
+- **Output**: Late delivery probability percentage (`0.0% - 100.0%`).
+
+### 2. Operational Anomaly Detection (`IsolationForest`)
+- **Artifacts**: `models/anomaly_detection_model.pkl`, `models/anomaly_scaler.pkl`, `models/anomaly_risk_scaler.pkl`
+- **Algorithm**: `IsolationForest` (Unsupervised tree isolation)
+- **Mathematical Flow**:
+  1. Input metrics (`profit`, `order_processing_days`, `avg_lead_time_by_mode`, `avg_shipping_cost`, `avg_defect_rate`, `max_defect_rate`, `profit_margin`) are standardized using `StandardScaler` ($\mu=0, \sigma=1$).
+  2. `IsolationForest` measures tree path lengths required to isolate individual samples. Shorter path lengths signal anomalous behavior.
+  3. Raw isolation scores are mapped into a standardized `0-100%` risk scale using `MinMaxScaler` (`anomaly_risk_scaler.pkl`).
+- **Outputs**:
+  - `anomaly_prediction`: `"Normal"` vs `"Anomaly"`
+  - `anomaly_score`: Raw isolation decision output.
+  - `anomaly_risk`: Normalized risk percentage (`0.0% - 100.0%`).
+
+### 3. Demand Forecasting Engine (`RandomForestRegressor`)
+- **Artifacts**: `models/demand_forecasting_model.pkl`, `models/demand_forecast_features.pkl`
+- **Algorithm**: `RandomForestRegressor` (Autoregressive time-series regression)
+- **Input Features**:
+  - `lag_1`: Sales demand in $t-1$
+  - `lag_2`: Sales demand in $t-2$
+  - `lag_3`: Sales demand in $t-3$
+  - `month`: Numerical target month ($1 - 12$)
+- **Output**: Continuous predicted demand unit volume.
+
+---
+
+## Composite Supply Chain Risk Formula
+
+Delivery Risk and Anomaly Risk are combined to generate an overall **Supply Chain Risk Score**:
+
+$$\text{Supply Chain Risk} = (0.60 \times \text{Delivery Risk}) + (0.40 \times \text{Anomaly Risk})$$
+
+### Risk Classification Matrix:
+- **Low**: Score $< 25.0$
+- **Medium**: Score $25.0 - 59.9$
+- **High**: Score $\ge 60.0$
+
+---
+
+## Real-Time Live Streaming & In-Memory Inference
+
+When integrated with the FastAPI backend (`Final_App/Backend`):
+
+1. **10-Second Automated Ticks**: The streaming pipeline (`stream_engine.py`) generates order transactions every 10 seconds.
+2. **In-Memory Prediction Execution**: `ml_handler.py` invokes `predict_supply_chain_risk()` and `predict_demand()` concurrently.
+3. **Rolling Lag Maintenance**: Demand forecasts dynamically consume updated rolling order volumes.
+4. **SSE EventStream Emission**: Live predictions are pushed to React frontend charts (`forecast-chart.tsx`, `risk-chart.tsx`) in real time.
+
+---
+
+## Python Usage & API
 
 Install dependencies:
 
@@ -56,45 +107,11 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-### Supply Chain Risk Prediction
-
-Import the prediction function:
+### 1. Risk & Anomaly Prediction
 
 ```python
 from predict import predict_supply_chain_risk
-```
 
-The `predict_supply_chain_risk()` function requires the following input fields:
-
-- `product_id`
-- `customer_id`
-- `customer_segment`
-- `sales`
-- `quantity`
-- `shipping_mode`
-- `market`
-- `lead_time`
-- `avg_order_value_30d`
-- `num_orders_30d`
-- `is_high_value`
-- `is_bulk_order`
-- `day_of_week`
-- `month`
-- `quarter`
-- `year`
-- `department`
-- `class`
-- `profit`
-- `order_processing_days`
-- `avg_lead_time_by_mode`
-- `avg_shipping_cost`
-- `avg_defect_rate`
-- `max_defect_rate`
-- `profit_margin`
-
-Provide the required order data:
-
-```python
 order_data = {
     "product_id": 365,
     "customer_id": 2,
@@ -114,7 +131,6 @@ order_data = {
     "year": 2017,
     "department": "Technology",
     "class": "Regular Air",
-
     "profit": 20.0,
     "order_processing_days": 2,
     "avg_lead_time_by_mode": 10.0,
@@ -125,13 +141,12 @@ order_data = {
 }
 
 result = predict_supply_chain_risk(order_data)
-
 print(result)
 ```
 
-Example output:
+**Example Output**:
 
-```python
+```json
 {
     "delivery_risk": 22.0,
     "anomaly_prediction": "Normal",
@@ -142,24 +157,11 @@ Example output:
 }
 ```
 
-### Demand Forecasting
-
-Import the demand forecasting function:
+### 2. Demand Forecasting
 
 ```python
 from predict import predict_demand
-```
 
-The `predict_demand()` function requires:
-
-- `lag_1`
-- `lag_2`
-- `lag_3`
-- `month`
-
-Provide the previous three months of demand:
-
-```python
 prediction = predict_demand(
     lag_1=4675,
     lag_2=4146,
@@ -167,83 +169,17 @@ prediction = predict_demand(
     month=10
 )
 
-print(prediction)
+print("Predicted Demand:", prediction)
 ```
 
-Example output:
+---
 
-```text
-4701.02
+## Interactive Gradio Interface
+
+A standalone interactive model testing GUI (`app.py`) is built-in and can be launched locally or mounted inside FastAPI at `http://localhost:8000/model/test/`.
+
+To run Gradio standalone:
+
+```bash
+python app.py
 ```
-
-## Project Structure
-
-```text
-supply-chain-ml-models/
-│
-├── models/
-│   ├── delivery_delay_model.pkl
-│   ├── delivery_preprocessor.pkl
-│   ├── demand_forecasting_model.pkl
-│   ├── demand_forecast_features.pkl
-│   ├── anomaly_detection_model.pkl
-│   ├── anomaly_scaler.pkl
-│   └── anomaly_risk_scaler.pkl
-│
-├── predict.py
-├── requirements.txt
-└── README.md
-```
-
-## Backend Integration
-
-The `predict.py` module is designed to be imported by a backend API.
-
-The backend can call:
-
-```python
-from predict import predict_supply_chain_risk
-from predict import predict_demand
-```
-
-For supply chain risk:
-
-```python
-result = predict_supply_chain_risk(order_data)
-```
-
-For demand forecasting:
-
-```python
-prediction = predict_demand(
-    lag_1,
-    lag_2,
-    lag_3,
-    month
-)
-```
-
-The returned prediction results can be converted to JSON by the backend API and sent to the frontend.
-
-## Model Testing
-
-The trained models were independently tested after saving.
-
-Tested components:
-
-- Delivery delay prediction
-- Anomaly detection
-- Demand forecasting
-- Supply chain risk calculation
-
-The models were also tested after downloading them from the Hugging Face repository.
-
-The downloaded models successfully loaded and generated predictions through the standalone inference pipeline.
-
-## Hugging Face Repository
-
-The trained models and inference code are hosted in this repository:
-
-`saniamirza/supply-chain-ml-models`
-
-The repository contains all required model files, preprocessors, scalers, inference code, dependencies, and documentation for backend integration.
