@@ -4,6 +4,23 @@
 
 ---
 
+## Project Vision & Core Aim
+
+### 1. The Core Aim of RIMS
+Legacy Supply Chain Management (SCM) systems rely on batch reporting (daily or weekly ETL runs), leaving logistics managers blind to intra-day disruptions. When a shipment is delayed, a supplier defect rate spikes, or inventory runs out, operations teams usually react **after** customer dissatisfaction or financial loss occurs.
+
+**The Aim of RIMS** is to transform supply chain operations from **reactive troubleshooting** to **proactive predictive intelligence**. By pairing enterprise-scale Databricks Gold-layer analytical tables with a 10-second live machine learning inference pipeline, RIMS detects disruptions, quantifies risk, and predicts demand changes **in real time**.
+
+### 2. What RIMS Detects
+RIMS continuously monitors supply chain transactions and automatically detects:
+
+- 🚚 **Delivery Delay Risks**: Calculates the exact probability of a shipment being delayed *before* it leaves the warehouse, based on carrier mode, market, lead time, and order priority.
+- ⚠️ **Operational & Financial Anomalies**: Detects unexpected margin drops, shipping cost anomalies, order processing bottlenecks, and high supplier defect rates using unsupervised Isolation Forests.
+- 📈 **Demand Shifts & Stockout Risks**: Predicts next month's product demand using autoregressive lag features ($t-1, t-2, t-3$) to prevent stockouts and overstocking.
+- 🏭 **Regional & Carrier Bottlenecks**: Identifies underperforming geographic markets, carrier failure rates, and warehouse utilization metrics.
+
+---
+
 ## Architecture Overview
 
 ```mermaid
@@ -207,6 +224,39 @@ sequenceDiagram
 6. **Dynamic UI Rendering (`Frontend/src/services/pipeline.ts`)**:
    - React components listen to the SSE connection using standard `EventSource`.
    - Real-time risk line charts (`risk-chart.tsx`), demand forecasting charts (`forecast-chart.tsx`), and active risk breakdown cards automatically update without page refreshes.
+
+---
+
+## Frequently Asked Questions (Q&A)
+
+### Q1: What is the primary aim of the RIMS project?
+**Answer**: The primary aim of RIMS is to provide an end-to-end, real-time supply chain intelligence platform. It eliminates operational blind spots by bridging enterprise analytical warehousing (Databricks Gold tables) with live 10-second machine learning telemetry, enabling proactive risk mitigation before disruptions affect customers.
+
+### Q2: What specific supply chain disruptions does RIMS detect?
+**Answer**: RIMS detects three core categories of disruptions:
+1. **Shipping Delays**: High probability of late delivery based on carrier, route, lead time, and order traits.
+2. **Operational & Financial Anomalies**: Unusually high defect rates, unexpected shipping cost surges, and profit margin collapses.
+3. **Demand Volatility**: Impending inventory stockouts or overstocking through 3-month autoregressive lag forecasting.
+
+### Q3: Why are multiple ML models used instead of a single overall model?
+**Answer**: Supply chain dynamics require different types of mathematical modeling:
+- **Delivery Delay** is a *supervised classification problem* trained on historical fulfillment labels (`RandomForestClassifier`).
+- **Anomaly Detection** is an *unsupervised pattern recognition problem* designed to flag novel, unseen operational failures (`IsolationForest`).
+- **Demand Forecasting** is a *continuous regression problem* modeling seasonal and temporal demand trends (`RandomForestRegressor`).
+
+### Q4: How are Delivery Risk and Anomaly Risk combined into a single score?
+**Answer**: They are combined using a weighted composite formula:
+$$\text{Supply Chain Risk} = 0.60 \times \text{Delivery Risk} + 0.40 \times \text{Anomaly Risk}$$
+Delivery risk carries a 60% weight because fulfillment delays directly impact customer satisfaction, while operational anomalies carry a 40% weight to catch cost leaks and defect spikes.
+
+### Q5: How does the live 10-second data injection pipeline work without overloading Databricks?
+**Answer**: The live pipeline operates asynchronously in-memory inside the FastAPI backend. It generates synthetic live order telemetry and runs lightweight scikit-learn models locally every 10 seconds. Heavy analytical queries hit Databricks SQL Warehouse separately with an automated 300-second in-memory cache, keeping Databricks query costs low while maintaining instant UI reactivity.
+
+### Q6: What is the purpose of the AI RAG Assistant?
+**Answer**: The AI RAG (Retrieval-Augmented Generation) assistant enables operations teams to interact with supply chain data using natural language. It indexes operational documentation into ChromaDB and uses Google Gemini (or OpenAI) to answer complex diagnostic questions about inventory levels, risk scores, and carrier performance.
+
+### Q7: Can developers or logistics staff test custom inputs manually?
+**Answer**: Yes! An interactive Gradio GUI is embedded directly at `http://localhost:8000/model/test/`. Operations teams can manually enter custom order parameters to test edge cases, simulate anomalies, and verify risk outputs in real time.
 
 ---
 
