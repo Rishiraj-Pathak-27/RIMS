@@ -1,3 +1,0 @@
-[submodule "supply-chain-ml-models"]
-	path = supply-chain-ml-models
-	url = https://huggingface.co/saniamirza/supply-chain-ml-models
