@@ -302,13 +302,17 @@ class AIHandler:
         if context:
             sources = [doc.get("source", "unknown") for doc in context]
             return (
-                f"Based on the provided context from {', '.join(sources)}, "
-                f"here's a summary for your question: '{query}'. "
-                f"[This is a fallback response — no LLM provider was available. "
-                f"Please configure GEMINI_API_KEY in .env]"
+                f"### System Notice: LLM Provider Unavailable\n\n"
+                f"Based on the provided context from ({', '.join(set(sources))}), "
+                f"I found some internal records matching your question: **'{query}'**.\n\n"
+                f"> **Configuration Required**\n"
+                f"> Mydear Supply Chain Copilot AI features are currently running in **fallback mode**. "
+                f"> To enable full AI analytics, forecasting, and natural language insights, please configure the `GEMINI_API_KEY` in your `.env` file."
             )
         return (
-            f"Here's an answer to your question: '{query}'. "
-            f"[This is a fallback response — no LLM provider was available. "
-            f"Please configure GEMINI_API_KEY in .env]"
+            f"### System Notice: LLM Provider Unavailable\n\n"
+            f"You asked: **'{query}'**\n\n"
+            f"> **Configuration Required**\n"
+            f"> Mydear Supply Chain Copilot AI features are currently running in **fallback mode**. "
+            f"> To enable full AI analytics, forecasting, and natural language insights, please configure the `GEMINI_API_KEY` in your `.env` file."
         )

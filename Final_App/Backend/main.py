@@ -8,6 +8,10 @@ from rag_handler import RAGHandler
 from ai_handler import AIHandler
 from sendData import stream_router
 from databricks_analytics import analytics_router
+from ml_router import ml_router
+from live_data_injection_pipeline.stream_router import pipeline_router
+from live_data_injection_pipeline.stream_engine import start_engine
+from ml_handler import get_ml_handler
 
 load_dotenv()
 
@@ -84,6 +88,40 @@ async def root():
 
 app.include_router(stream_router, prefix="/api/stream", tags=["Streaming"])
 app.include_router(analytics_router, tags=["Databricks Analytics"])
+app.include_router(ml_router)
+app.include_router(pipeline_router)
+
+# Mount Gradio ML Demo Interface at /model/test
+import sys
+import gradio as gr
+
+_models_repo_path = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "supply-chain-ml-models"
+)
+if _models_repo_path not in sys.path:
+    sys.path.insert(0, _models_repo_path)
+
+try:
+    from app import demo as gradio_demo
+    app = gr.mount_gradio_app(app, gradio_demo, path="/model/test")
+    print("[main] Successfully mounted Gradio ML app at /model/test")
+except Exception as e:
+    print(f"[main] Failed to mount Gradio app at /model/test: {e}")
+
+
+
+@app.on_event("startup")
+async def _start_live_pipeline():
+    """Start the live data injection pipeline on server boot."""
+    try:
+        handler = get_ml_handler()
+        if handler.is_loaded:
+            start_engine(handler)
+        else:
+            print("[main] ML models not loaded — pipeline will not start.")
+    except Exception as e:
+        print(f"[main] Pipeline startup error: {e}")
 
 @app.post("/query", response_model=QueryResponse, tags=["AI Queries"])
 async def query(request: QueryRequest):
