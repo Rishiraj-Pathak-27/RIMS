@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# start.sh — Start both Backend and Frontend for Final_app
+# start.sh — Start Backend, Frontend, and ML Inference for Final_app
 #
 # Usage:
 #   cd Final_app
 #   bash start.sh
 #
-# Stops both services on Ctrl+C.
+# Stops all services on Ctrl+C.
 # ---------------------------------------------------------------------------
 
 set -e
@@ -14,21 +14,28 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_DIR="$SCRIPT_DIR/Backend"
 FRONTEND_DIR="$SCRIPT_DIR/Frontend"
+ML_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/supply-chain-ml-models"
 BACKEND_URL="${BACKEND_URL:-http://127.0.0.1:8000}"
 FRONTEND_HOST="${FRONTEND_HOST:-127.0.0.1}"
 FRONTEND_PORT="${FRONTEND_PORT:-8082}"
 FRONTEND_URL="http://$FRONTEND_HOST:$FRONTEND_PORT"
+ML_HOST="${ML_HOST:-127.0.0.1}"
+ML_PORT="${ML_PORT:-7860}"
+ML_URL="http://$ML_HOST:$ML_PORT"
 BACKEND_DATA_URL="$BACKEND_URL/api/dashboard-summary"
 BACKEND_STATUS_URL="$BACKEND_URL/api/databricks-status"
 BACKEND_VENV_DIR="$BACKEND_DIR/.venv"
+ML_VENV_DIR="$ML_DIR/.venv"
 
 # Track child PIDs so we can clean up on exit
 BACKEND_PID=""
 FRONTEND_PID=""
+ML_PID=""
 
 cleanup() {
   echo ""
   echo "[start.sh] Shutting down..."
+  [ -n "$ML_PID" ]       && kill "$ML_PID"       2>/dev/null
   [ -n "$BACKEND_PID" ]  && kill "$BACKEND_PID"  2>/dev/null
   [ -n "$FRONTEND_PID" ] && kill "$FRONTEND_PID" 2>/dev/null
   wait 2>/dev/null
@@ -156,9 +163,66 @@ check_databricks_connection() {
   return 1
 }
 
+# ── ML Model Dependencies ─────────────────────────────────────────────────
+ml_dependencies_ready() {
+  "$ML_PYTHON_BIN" - <<'PY' >/dev/null 2>&1
+modules = [
+    "pandas",
+    "numpy",
+    "sklearn",
+    "joblib",
+    "gradio",
+]
+for module in modules:
+    __import__(module)
+PY
+}
+
+install_ml_dependencies() {
+  if ml_dependencies_ready; then
+    echo "[start.sh] ML model dependencies already installed."
+    return
+  fi
+
+  echo "[start.sh] Installing ML model dependencies..."
+  (
+    cd "$ML_DIR"
+    "$ML_PYTHON_BIN" -m pip install --upgrade pip
+    "$ML_PYTHON_BIN" -m pip install -r requirements.txt
+    # Gradio is needed to run the inference app but may not be in requirements.txt
+    "$ML_PYTHON_BIN" -m pip install gradio
+  )
+}
+
 require_backend_env
 SYSTEM_PYTHON_BIN="$(choose_python)"
 PYTHON_BIN="$BACKEND_VENV_DIR/bin/python"
+ML_PYTHON_BIN="$ML_VENV_DIR/bin/python"
+
+# ── ML Inference Server ───────────────────────────────────────────────────
+if [ -d "$ML_DIR" ]; then
+  echo "[start.sh] ML models directory found at $ML_DIR"
+
+  if [ ! -x "$ML_PYTHON_BIN" ]; then
+    echo "[start.sh] Creating ML virtual environment..."
+    "$SYSTEM_PYTHON_BIN" -m venv "$ML_VENV_DIR"
+  fi
+
+  install_ml_dependencies
+
+  echo "[start.sh] Starting ML Inference Server (Gradio) on $ML_URL ..."
+  (
+    cd "$ML_DIR"
+    "$ML_PYTHON_BIN" app.py
+  ) &
+  ML_PID=$!
+
+  # Give the Gradio server a moment to bind
+  wait_for_url "$ML_URL/" "ML Inference Server" 30 2 || \
+    echo "[start.sh] WARNING: ML Inference Server may not be fully ready yet, continuing..."
+else
+  echo "[start.sh] WARNING: ML models directory not found at $ML_DIR — skipping ML server."
+fi
 
 # ── Backend ────────────────────────────────────────────────────────────────
 if [ ! -x "$PYTHON_BIN" ]; then
@@ -195,10 +259,13 @@ echo "============================================="
 echo "  Frontend app          → $FRONTEND_URL"
 echo "  Backend API health    → $BACKEND_STATUS_URL"
 echo "  Backend live JSON     → $BACKEND_DATA_URL"
+if [ -n "$ML_PID" ]; then
+echo "  ML Inference (Gradio) → $ML_URL"
+fi
 echo "  Databricks data fetch → connected"
-echo "  Press Ctrl+C to stop both services."
+echo "  Press Ctrl+C to stop all services."
 echo "============================================="
 echo ""
 
-# Wait for either process to exit
+# Wait for any child process to exit
 wait
