@@ -1,0 +1,1 @@
+import{Jt as e,Q as t,at as n,et as r,yt as i}from"./index-C9kFa9Y9.js";import"./core-2B9Tgos7.js";function a(a,o){e();var s=n();i(()=>t(s,o.value||``)),r(a,s)}export{a as default};

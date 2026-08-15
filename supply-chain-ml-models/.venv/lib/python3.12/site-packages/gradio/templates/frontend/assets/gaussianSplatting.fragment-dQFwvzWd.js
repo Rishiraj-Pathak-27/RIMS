@@ -1,0 +1,1 @@
+import{i as e}from"./splatFileLoader-DWRdXsyF.js";export{e as gaussianSplattingPixelShader};

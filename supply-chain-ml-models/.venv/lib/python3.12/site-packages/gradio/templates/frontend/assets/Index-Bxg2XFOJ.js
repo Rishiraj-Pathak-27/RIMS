@@ -1,0 +1,1 @@
+import{Ht as e,Ut as t,bt as n,i as r}from"./index-C9kFa9Y9.js";import{t as i}from"./src-C7fJVIcE.js";import"./core-2B9Tgos7.js";function a(a,o){t(o,!0);let s=new i(r(o,[`$$slots`,`$$events`,`$$legacy`]));n(()=>{s.props.value&&s.dispatch(`change`)}),e()}export{a as default};
