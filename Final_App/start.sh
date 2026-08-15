@@ -111,7 +111,8 @@ modules = [
     "dotenv",
     "databricks.sql",
     "pinecone",
-    "sentence_transformers",
+    "joblib",
+    "pandas",
     "google.genai",
     "openai",
 ]
