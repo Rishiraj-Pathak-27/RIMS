@@ -5,6 +5,8 @@ from typing import Tuple, List, Dict, Any, Optional
 from google import genai
 from google.genai import types
 
+from ollama_handler import OllamaHandler
+
 # OpenAI is optional — imported lazily only when a real key is present
 _openai_available = False
 try:
@@ -18,12 +20,13 @@ class AIHandler:
     """
     Multi-model AI handler for RAG response generation.
 
-    Primary:  Google Gemini  (via google-genai SDK)
-    Fallback: OpenAI GPT    (via openai SDK, optional)
+    Primary:  Local Ollama model (default: gemma:2b) — grounded on Pinecone context
+    Fallback: Google Gemini  (via google-genai SDK)
+    Fallback: OpenAI GPT     (via openai SDK, optional)
 
-    The handler tries Gemini first (with retry on rate-limit).
-    If Gemini is unavailable and a valid OpenAI key is configured,
-    it falls back to OpenAI.  Otherwise a static fallback is returned.
+    The provider order is configurable via LLM_PROVIDER_ORDER
+    (default: "ollama,gemini,openai"). If no provider answers, a static
+    fallback message is returned.
     """
 
     # Placeholder values that mean "not configured"
@@ -74,12 +77,23 @@ class AIHandler:
             except Exception as e:
                 print(f"⚠ OpenAI init failed: {e}")
         else:
-            print("ℹ OpenAI not configured – Gemini will be the sole provider.")
+            print("ℹ OpenAI not configured – skipping the OpenAI fallback.")
 
-        if not self.gemini_available and not self.openai_ready:
+        # ── Local Ollama setup (primary) ─────────────────────────────
+        self.ollama = OllamaHandler()
+        self.ollama_ready = self.ollama.available
+
+        self.provider_order = [
+            name.strip().lower()
+            for name in os.getenv("LLM_PROVIDER_ORDER", "ollama,gemini,openai").split(",")
+            if name.strip()
+        ]
+
+        if not self.ollama_ready and not self.gemini_available and not self.openai_ready:
             print(
                 "⚠ No LLM provider is available! "
-                "Set GEMINI_API_KEY in .env (OPENAI_API_KEY is optional)"
+                "Start Ollama and run `ollama pull gemma:2b`, "
+                "or set GEMINI_API_KEY in .env (OPENAI_API_KEY is optional)"
             )
 
     # ──────────────────────────────────────────────────────────────────
@@ -109,35 +123,104 @@ class AIHandler:
         Returns:
             Tuple of (response_text, confidence_score)
         """
-        # Build messages
-        system_prompt = self._build_system_prompt()
+        result = self.generate(query, context, temperature, max_tokens)
+        return result["response"], result["confidence"]
+
+    def generate(
+        self,
+        query: str,
+        context: Optional[List[Dict[str, Any]]] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 500,
+    ) -> Dict[str, Any]:
+        """
+        Generate an answer and report which provider produced it.
+
+        Providers are tried in LLM_PROVIDER_ORDER (default: Ollama, then
+        Gemini, then OpenAI). When retrieval context is supplied the prompt
+        forces the model to answer strictly from that context.
+
+        Returns:
+            Dict with keys: response, confidence, provider, model, grounded
+        """
+        grounded = bool(context)
+        system_prompt = self._build_system_prompt(grounded=grounded)
         user_prompt = self._build_user_prompt(query, context)
         confidence = self._calculate_confidence(context) if context else 0.7
+        # Grounded answers should stay close to the retrieved records.
+        effective_temperature = 0.2 if grounded else temperature
 
-        # 1️⃣  Try Gemini (with retry for free-tier rate limits)
-        if self.gemini_available:
-            try:
-                response_text = self._call_gemini_with_retry(
-                    system_prompt, user_prompt, temperature, max_tokens
-                )
-                if response_text:
-                    return response_text, confidence
-            except Exception as e:
-                print(f"⚠ Gemini call failed: {e}")
+        for provider in self.provider_order:
+            if provider == "ollama" and self.ollama_ready:
+                try:
+                    response_text = self.ollama.chat(
+                        system_prompt, user_prompt, effective_temperature, max_tokens
+                    )
+                    if response_text:
+                        return {
+                            "response": response_text,
+                            "confidence": confidence,
+                            "provider": "ollama",
+                            "model": self.ollama.model,
+                            "grounded": grounded,
+                        }
+                except Exception as e:
+                    print(f"⚠ Ollama call failed: {e}")
 
-        # 2️⃣  Try OpenAI (only if a real key is configured)
-        if self.openai_ready:
-            try:
-                response_text = self._call_openai(
-                    system_prompt, user_prompt, temperature, max_tokens
-                )
-                if response_text:
-                    return response_text, confidence
-            except Exception as e:
-                print(f"⚠ OpenAI call failed: {e}")
+            elif provider == "gemini" and self.gemini_available:
+                try:
+                    response_text = self._call_gemini_with_retry(
+                        system_prompt, user_prompt, effective_temperature, max_tokens
+                    )
+                    if response_text:
+                        return {
+                            "response": response_text,
+                            "confidence": confidence,
+                            "provider": "gemini",
+                            "model": self.gemini_model_name,
+                            "grounded": grounded,
+                        }
+                except Exception as e:
+                    print(f"⚠ Gemini call failed: {e}")
 
-        # 3️⃣  Static fallback
-        return self._get_fallback_response(query, context), confidence
+            elif provider == "openai" and self.openai_ready:
+                try:
+                    response_text = self._call_openai(
+                        system_prompt, user_prompt, effective_temperature, max_tokens
+                    )
+                    if response_text:
+                        return {
+                            "response": response_text,
+                            "confidence": confidence,
+                            "provider": "openai",
+                            "model": self.openai_model_name,
+                            "grounded": grounded,
+                        }
+                except Exception as e:
+                    print(f"⚠ OpenAI call failed: {e}")
+
+        return {
+            "response": self._get_fallback_response(query, context),
+            "confidence": confidence,
+            "provider": "fallback",
+            "model": None,
+            "grounded": False,
+        }
+
+    def get_status(self) -> Dict[str, Any]:
+        """Report which generation providers are currently usable."""
+        return {
+            "provider_order": self.provider_order,
+            "ollama": self.ollama.get_status(),
+            "gemini": {
+                "status": "active" if self.gemini_available else "unavailable",
+                "model": self.gemini_model_name,
+            },
+            "openai": {
+                "status": "active" if self.openai_ready else "unavailable",
+                "model": self.openai_model_name,
+            },
+        }
 
     # ──────────────────────────────────────────────────────────────────
     # Provider calls
@@ -219,8 +302,23 @@ class AIHandler:
     # Prompt builders
     # ──────────────────────────────────────────────────────────────────
 
-    def _build_system_prompt(self) -> str:
+    def _build_system_prompt(self, grounded: bool = False) -> str:
         """Return the system-level instruction for the LLM."""
+        if grounded:
+            return (
+                "You are a supply-chain analytics assistant for a logistics platform called RIMS.\n\n"
+                "GROUNDING RULES (strict):\n"
+                "- Answer ONLY using facts present in the retrieved records below the question.\n"
+                "- Never invent order IDs, numbers, dates, or trends that are not in the records.\n"
+                "- Cite the record numbers you used, e.g. (Record 2).\n"
+                "- If the records do not answer the question, say exactly what is missing "
+                "instead of guessing.\n"
+                "- Do not mention embeddings, vector databases, or how the records were retrieved.\n\n"
+                "RESPONSE FORMAT:\n"
+                "- A one-line direct answer, then 2-5 bullet points of supporting evidence.\n"
+                "- Bold key metrics and values.\n"
+                "- Keep it concise; no filler."
+            )
         return (
             "You are an expert supply-chain analytics assistant for a logistics platform called RIMS. "
             "You help users understand forecasts, inventory health, supplier risks, shipments, and demand intelligence.\n\n"
@@ -244,10 +342,10 @@ class AIHandler:
         if context:
             context_text = self._format_context(context)
             return (
-                f"Retrieved Data:\n{context_text}\n\n"
+                f"Retrieved Records:\n{context_text}\n\n"
                 f"User Question: {query}\n\n"
-                f"Analyze the retrieved data and provide a clear, actionable answer. "
-                f"Use formatting (bold, bullet points, numbered lists) to make the response easy to scan."
+                f"Answer the question using only the retrieved records above, citing the "
+                f"record numbers you relied on. If they are insufficient, say what is missing."
             )
         return (
             f"User Question: {query}\n\n"
@@ -306,13 +404,13 @@ class AIHandler:
                 f"Based on the provided context from ({', '.join(set(sources))}), "
                 f"I found some internal records matching your question: **'{query}'**.\n\n"
                 f"> **Configuration Required**\n"
-                f"> Mydear Supply Chain Copilot AI features are currently running in **fallback mode**. "
-                f"> To enable full AI analytics, forecasting, and natural language insights, please configure the `GEMINI_API_KEY` in your `.env` file."
+                f"> The Supply Chain Copilot is running in **fallback mode** because no LLM provider is reachable.\n"
+                f"> Start Ollama and run `ollama pull gemma:2b`, or configure `GEMINI_API_KEY` in your `.env` file."
             )
         return (
             f"### System Notice: LLM Provider Unavailable\n\n"
             f"You asked: **'{query}'**\n\n"
             f"> **Configuration Required**\n"
-            f"> Mydear Supply Chain Copilot AI features are currently running in **fallback mode**. "
-            f"> To enable full AI analytics, forecasting, and natural language insights, please configure the `GEMINI_API_KEY` in your `.env` file."
+            f"> The Supply Chain Copilot is running in **fallback mode** because no LLM provider is reachable.\n"
+            f"> Start Ollama and run `ollama pull gemma:2b`, or configure `GEMINI_API_KEY` in your `.env` file."
         )

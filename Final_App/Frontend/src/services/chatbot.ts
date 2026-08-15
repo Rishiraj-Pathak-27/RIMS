@@ -8,6 +8,10 @@ interface QueryResponse {
   response: string;
   sources?: string[];
   confidence?: number;
+  provider?: string;
+  model?: string;
+  grounded?: boolean;
+  retrieved_count?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -20,22 +24,28 @@ export async function askAssistant(prompt: string): Promise<ChatMessage> {
       body: JSON.stringify({
         query: prompt,
         use_rag: true,
-        top_k: 3,
+        top_k: 5,
       }),
     });
+
+    const retrieved = result.retrieved_count ?? result.sources?.length ?? 0;
+    const title = result.grounded
+      ? `Grounded on ${retrieved} record${retrieved === 1 ? "" : "s"} · ${result.model ?? result.provider ?? "local model"}`
+      : "Answered without retrieved records";
 
     return {
       id: crypto.randomUUID(),
       role: "assistant",
       createdAt: new Date().toISOString(),
       content: result.response,
-      insight: result.confidence
-        ? {
-            title: "Backend response",
-            points: result.sources ?? [],
-            confidence: Math.round(result.confidence * 100),
-          }
-        : undefined,
+      insight:
+        result.confidence !== undefined
+          ? {
+              title,
+              points: result.sources ?? [],
+              confidence: Math.round(result.confidence * 100),
+            }
+          : undefined,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "The backend request failed.";

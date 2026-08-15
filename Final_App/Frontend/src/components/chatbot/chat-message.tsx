@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import type { ChatMessage as Msg } from "@/types/chatbot";
 import { AIResponseCard } from "./ai-response-card";
+import { MarkdownContent } from "./markdown-content";
 import { Sparkles, User } from "lucide-react";
 
 export function ChatMessage({ msg }: { msg: Msg }) {
@@ -24,7 +25,7 @@ export function ChatMessage({ msg }: { msg: Msg }) {
               : "bg-surface-muted text-foreground rounded-tl-sm",
           )}
         >
-          {msg.content}
+          {isUser ? msg.content : <MarkdownContent content={msg.content} />}
         </div>
         {msg.insight && <AIResponseCard insight={msg.insight} />}
       </div>
