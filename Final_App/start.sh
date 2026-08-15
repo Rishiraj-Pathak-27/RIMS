@@ -111,7 +111,8 @@ modules = [
     "dotenv",
     "databricks.sql",
     "pinecone",
-    "sentence_transformers",
+    "joblib",
+    "pandas",
     "google.genai",
     "openai",
 ]
@@ -194,7 +195,31 @@ install_ml_dependencies() {
   )
 }
 
+check_ollama() {
+  local ollama_url="${OLLAMA_BASE_URL:-$(env_value OLLAMA_BASE_URL)}"
+  ollama_url="${ollama_url:-http://localhost:11434}"
+  local llm_model="${OLLAMA_LLM_MODEL:-$(env_value OLLAMA_LLM_MODEL)}"
+  llm_model="${llm_model:-gemma:2b}"
+  local embed_model="${PINECONE_EMBEDDING_MODEL:-$(env_value PINECONE_EMBEDDING_MODEL)}"
+  embed_model="${embed_model:-nomic-embed-text}"
+
+  local tags
+  tags="$(curl --max-time 5 -fsS "$ollama_url/api/tags" 2>/dev/null || true)"
+  if [ -z "$tags" ]; then
+    echo "[start.sh] WARNING: Ollama is not reachable at $ollama_url — the copilot will fall back to Gemini/OpenAI." >&2
+    echo "[start.sh]          Start it with: ollama serve" >&2
+    return
+  fi
+
+  for model in "$llm_model" "$embed_model"; do
+    if ! echo "$tags" | grep -q "\"${model%%:*}"; then
+      echo "[start.sh] WARNING: Ollama model '$model' is missing. Run: ollama pull $model" >&2
+    fi
+  done
+}
+
 require_backend_env
+check_ollama
 SYSTEM_PYTHON_BIN="$(choose_python)"
 PYTHON_BIN="$BACKEND_VENV_DIR/bin/python"
 ML_PYTHON_BIN="$ML_VENV_DIR/bin/python"

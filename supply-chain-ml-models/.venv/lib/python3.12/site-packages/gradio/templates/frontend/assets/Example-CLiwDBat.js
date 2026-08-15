@@ -1,0 +1,1 @@
+import{Et as e,F as t,Q as n,Yt as r,et as i,nt as a,r as o,yt as s}from"./index-C9kFa9Y9.js";import"./core-2B9Tgos7.js";var c=a(`<div> </div>`);function l(a,l){let u=o(l,`selected`,3,!1);var d=c();let f;var p=e(d,!0);r(d),s(()=>{f=t(d,1,`svelte-1eh6nev`,null,f,{table:l.type===`table`,gallery:l.type===`gallery`,selected:u()}),n(p,l.value)}),i(a,d)}export{l as default};

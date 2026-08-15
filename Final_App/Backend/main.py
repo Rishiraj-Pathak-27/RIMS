@@ -57,19 +57,23 @@ def get_rag_handler() -> RAGHandler:
 def get_ai_handler() -> AIHandler:
     global ai_handler
     if ai_handler is None:
-        ai_handler = AIHandler()  # Multi-model: Gemini (primary) + OpenAI (fallback)
+        ai_handler = AIHandler()  # Ollama gemma:2b (primary) + Gemini/OpenAI fallbacks
     return ai_handler
 
 # Models
 class QueryRequest(BaseModel):
     query: str
     use_rag: bool = True
-    top_k: int = 3
+    top_k: int = 5
 
 class QueryResponse(BaseModel):
     response: str
     sources: Optional[List[str]] = None
     confidence: Optional[float] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    grounded: bool = False
+    retrieved_count: int = 0
 
 class DocumentUploadResponse(BaseModel):
     message: str
@@ -93,7 +97,11 @@ app.include_router(pipeline_router)
 
 # Mount Gradio ML Demo Interface at /model/test
 import sys
-import gradio as gr
+
+try:
+    import gradio as gr
+except ImportError:
+    gr = None
 
 _models_repo_path = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -102,12 +110,15 @@ _models_repo_path = os.path.join(
 if _models_repo_path not in sys.path:
     sys.path.insert(0, _models_repo_path)
 
-try:
-    from app import demo as gradio_demo
-    app = gr.mount_gradio_app(app, gradio_demo, path="/model/test")
-    print("[main] Successfully mounted Gradio ML app at /model/test")
-except Exception as e:
-    print(f"[main] Failed to mount Gradio app at /model/test: {e}")
+if gr is None:
+    print("[main] gradio not installed — skipping the /model/test demo mount.")
+else:
+    try:
+        from app import demo as gradio_demo
+        app = gr.mount_gradio_app(app, gradio_demo, path="/model/test")
+        print("[main] Successfully mounted Gradio ML app at /model/test")
+    except Exception as e:
+        print(f"[main] Failed to mount Gradio app at /model/test: {e}")
 
 
 
@@ -129,39 +140,34 @@ async def query(request: QueryRequest):
     Process a query with optional RAG.
     
     - **query**: The input query string
-    - **use_rag**: Whether to use RAG for retrieval (default: True)
-    - **top_k**: Number of top documents to retrieve (default: 3)
+    - **use_rag**: Retrieve Pinecone context and ground the answer on it (default: True)
+    - **top_k**: Number of top chunks to retrieve (default: 5)
     """
     try:
+        assistant = get_ai_handler()
+        relevant_docs = []
+
         if request.use_rag:
-            handler = get_rag_handler()
-            # Retrieve relevant documents from vector store
-            relevant_docs = handler.retrieve(request.query, top_k=request.top_k)
-            assistant = get_ai_handler()
-            
-            # Generate response using retrieved context
-            response, confidence = assistant.generate_response(
-                query=request.query,
-                context=relevant_docs
-            )
-            
-            # Extract sources
-            sources = [doc.get("source", "Unknown") for doc in relevant_docs]
-            
-            return QueryResponse(
-                response=response,
-                sources=sources,
-                confidence=confidence
-            )
-        else:
-            assistant = get_ai_handler()
-            # Generate response without RAG
-            response, confidence = assistant.generate_response(query=request.query)
-            
-            return QueryResponse(
-                response=response,
-                confidence=confidence
-            )
+            # Retrieve relevant chunks from Pinecone for grounding
+            relevant_docs = get_rag_handler().retrieve(request.query, top_k=request.top_k)
+
+        result = assistant.generate(query=request.query, context=relevant_docs or None)
+
+        sources = [
+            f"Record {i}: {doc.get('source', 'Knowledge Base')} "
+            f"(match {doc.get('similarity', 0.0) * 100:.0f}%)"
+            for i, doc in enumerate(relevant_docs, 1)
+        ]
+
+        return QueryResponse(
+            response=result["response"],
+            sources=sources or None,
+            confidence=result["confidence"],
+            provider=result["provider"],
+            model=result["model"],
+            grounded=result["grounded"],
+            retrieved_count=len(relevant_docs),
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -206,6 +212,14 @@ async def clear_documents():
         return {"message": "Vector store cleared successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/ai-status", tags=["AI Queries"])
+async def get_ai_status():
+    """Report the retrieval and generation providers backing the assistant."""
+    return {
+        "retrieval": get_rag_handler().get_status(),
+        "generation": get_ai_handler().get_status(),
+    }
 
 @app.get("/documents-status", tags=["Document Management"])
 async def get_documents_status():

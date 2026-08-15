@@ -15,8 +15,9 @@ The FastAPI backend (`Final_App/Backend`) serves as the central orchestration en
 | `databricks_client.py` | Databricks SQL Warehouse connector, parameterized query executor, in-memory caching |
 | `databricks_analytics.py` | Transforms raw Gold table rows into frontend dashboard data models |
 | `live_data_injection_pipeline/` | Background 10s tick generator, rolling buffer manager, SSE streaming router |
-| `ai_handler.py` | Multi-LLM provider integration (Google Gemini primary, OpenAI fallback) |
-| `rag_handler.py` | ChromaDB vector store indexer & retriever for operational documentation |
+| `ai_handler.py` | Multi-LLM provider orchestration (local Ollama primary, Gemini/OpenAI fallbacks) |
+| `ollama_handler.py` | Local Ollama chat client (`gemma:2b`) used for grounded RAG answers |
+| `rag_handler.py` | Pinecone vector store retriever (Ollama `nomic-embed-text` query embeddings) |
 
 ---
 
@@ -34,9 +35,22 @@ To maintain high responsiveness and reduce Databricks warehouse compute costs, q
 
 ## AI & RAG Assistant Engine (`ai_handler.py` & `rag_handler.py`)
 
-- **Vector Database**: `ChromaDB` with `all-MiniLM-L6-v2` embeddings.
-- **Document Indexing**: `POST /upload-documents` parses `.txt` and `.md` files into vector embeddings for similarity search.
-- **LLM Handler**: `POST /query` retrieves relevant context chunks from ChromaDB and passes them to Google Gemini (or OpenAI fallback) to generate natural language diagnostic responses.
+- **Vector Database**: Pinecone index (`PINECONE_INDEX_NAME`), queried with `nomic-embed-text` embeddings generated locally by Ollama — the same model used when the chunks were uploaded.
+- **Document Indexing**: `POST /upload-documents` parses `.txt` and `.md` files, embeds them with Ollama, and upserts them into Pinecone.
+- **LLM Handler**: `POST /query` retrieves the `top_k` chunks from Pinecone and passes them to the local Ollama model (`gemma:2b`) with a strict grounding prompt: the model answers only from the retrieved records, cites the record numbers it used, and states what is missing when the records are insufficient. Gemini and OpenAI remain configurable fallbacks via `LLM_PROVIDER_ORDER`.
+- **Response Fields**: `/query` returns `provider`, `model`, `grounded`, and `retrieved_count` alongside the answer so the frontend can show what the answer was grounded on.
+- **Local Setup**: `ollama serve`, then `ollama pull gemma:2b` and `ollama pull nomic-embed-text`.
+
+### Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `LLM_PROVIDER_ORDER` | `ollama,gemini,openai` | Order in which generation providers are tried |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
+| `OLLAMA_LLM_MODEL` | `gemma:2b` | Chat model used for grounded answers |
+| `OLLAMA_TIMEOUT` | `120` | Generation request timeout (seconds) |
+| `PINECONE_EMBEDDING_MODEL` | `nomic-embed-text` | Query embedding model (must match the ingestion model) |
+| `PINECONE_TEXT_FIELD` | `text` | Metadata field holding the chunk text |
 
 ---
 
@@ -56,6 +70,7 @@ To maintain high responsiveness and reduce Databricks warehouse compute costs, q
 | `GET` | `/api/databricks-status` | Databricks SQL connection state |
 | `GET` | `/api/ml/status` | ML models load status & registered model list |
 | `GET` | `/api/pipeline/status` | Live streaming pipeline execution status |
+| `GET` | `/ai-status` | Pinecone retrieval status and available LLM providers |
 
 ### Machine Learning & Real-Time Stream
 | Method | Endpoint | Description |

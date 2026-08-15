@@ -2,15 +2,15 @@ fastapi==0.109.0
 uvicorn==0.27.0
 pydantic>=2.7.0
 python-multipart==0.0.6
-langchain==0.1.13
-langchain-community==0.0.29
 google-genai>=2.3.0
 openai>=1.40.0
 pinecone>=5.0.0
-posthog<3.0.0
-sentence-transformers>=2.6.0
+joblib>=1.3.0
+scikit-learn>=1.3.0
+pandas>=2.0.0
 python-dotenv==1.0.0
 requests==2.31.0
 databricks-sql-connector>=3.4.0
-gradio>=4.0.0
+# gradio powers the optional /model/test demo only; it pins websockets/fastapi
+# ranges that conflict with this stack, so install it separately if needed.
 

@@ -30,7 +30,7 @@ class RAGHandler:
         self.namespace = os.getenv("PINECONE_NAMESPACE", "") or None
         self.text_field = os.getenv("PINECONE_TEXT_FIELD", "text")
         self.embedding_model = os.getenv("PINECONE_EMBEDDING_MODEL", "nomic-embed-text")
-        self.ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        self.ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
 
         # Placeholder detection
         _placeholders = {"", "your_pinecone_api_key_here", "your_index_name_here"}
@@ -115,7 +115,7 @@ class RAGHandler:
             for match in results.get("matches", []):
                 metadata = match.get("metadata", {})
                 content = metadata.get(self.text_field, "")
-                source = metadata.get("table", metadata.get("source", metadata.get("filename", "Knowledge Base")))
+                source = self._describe_source(metadata, match.get("id", ""))
                 score = match.get("score", 0)
 
                 if content:
@@ -130,6 +130,18 @@ class RAGHandler:
         except Exception as e:
             print(f"⚠ Pinecone query failed: {e}")
             return []
+
+    def _describe_source(self, metadata: Dict[str, Any], match_id: str) -> str:
+        """Build a human-readable label for a retrieved chunk."""
+        for field in ("table", "source", "filename"):
+            if metadata.get(field):
+                return str(metadata[field])
+
+        order_id = metadata.get("order_id")
+        if order_id:
+            return f"Order {order_id}"
+
+        return match_id or "Knowledge Base"
 
     def add_documents(self, documents: List[Dict[str, Any]]) -> int:
         """
