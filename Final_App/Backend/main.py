@@ -97,7 +97,11 @@ app.include_router(pipeline_router)
 
 # Mount Gradio ML Demo Interface at /model/test
 import sys
-import gradio as gr
+
+try:
+    import gradio as gr
+except ImportError:
+    gr = None
 
 _models_repo_path = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -106,12 +110,15 @@ _models_repo_path = os.path.join(
 if _models_repo_path not in sys.path:
     sys.path.insert(0, _models_repo_path)
 
-try:
-    from app import demo as gradio_demo
-    app = gr.mount_gradio_app(app, gradio_demo, path="/model/test")
-    print("[main] Successfully mounted Gradio ML app at /model/test")
-except Exception as e:
-    print(f"[main] Failed to mount Gradio app at /model/test: {e}")
+if gr is None:
+    print("[main] gradio not installed — skipping the /model/test demo mount.")
+else:
+    try:
+        from app import demo as gradio_demo
+        app = gr.mount_gradio_app(app, gradio_demo, path="/model/test")
+        print("[main] Successfully mounted Gradio ML app at /model/test")
+    except Exception as e:
+        print(f"[main] Failed to mount Gradio app at /model/test: {e}")
 
 
 
