@@ -20,7 +20,8 @@ class OllamaHandler:
             OLLAMA_TIMEOUT   – Request timeout in seconds (default: 120)
         """
         self.base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
-        self.model = os.getenv("OLLAMA_LLM_MODEL", "gemma:2b")
+        # OLLAMA_MODEL is retained as a compatibility alias for existing .env files.
+        self.model = os.getenv("OLLAMA_LLM_MODEL", os.getenv("OLLAMA_MODEL", "gemma:2b"))
         self.timeout = float(os.getenv("OLLAMA_TIMEOUT", "120"))
         self.available = self._check_available()
 
@@ -42,6 +43,11 @@ class OllamaHandler:
         print(f"⚠ Ollama running but '{self.model}' not found. Available: {models}")
         print(f"  Run: ollama pull {self.model}")
         return False
+
+    def refresh_availability(self) -> bool:
+        """Recheck Ollama so a backend started too early can recover automatically."""
+        self.available = self._check_available()
+        return self.available
 
     def chat(
         self,

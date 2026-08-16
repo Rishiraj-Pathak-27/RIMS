@@ -11,7 +11,7 @@ For detailed technical explanations, mathematical formulations, API specificatio
 - 📖 **[01 — Architecture & Vision](docs/01-architecture-and-vision.md)**: Executive summary, project aim, problem solved, detection matrix, and high-level system diagrams.
 - 🤖 **[02 — Machine Learning Engine](docs/02-machine-learning-engine.md)**: Deep dive into the 3 scikit-learn models (`RandomForestClassifier`, `IsolationForest`, `RandomForestRegressor`), scalers, composite risk formulas, and Python inference code.
 - ⚡ **[03 — Live Data Injection Pipeline](docs/03-live-data-injection-pipeline.md)**: Real-time 10s streaming tick loop, synthetic telemetry generation, 30-tick rolling buffer, Server-Sent Events (SSE), and dynamic UI rendering.
-- ⚙️ **[04 — Backend & API Reference](docs/04-backend-and-api-reference.md)**: FastAPI architecture, Databricks SQL caching, ChromaDB vector RAG engine, Gradio testing GUI (`/model/test/`), and complete endpoint reference tables.
+- ⚙️ **[04 — Backend & API Reference](docs/04-backend-and-api-reference.md)**: FastAPI architecture, Databricks SQL caching, Pinecone RAG engine, Gradio testing GUI (`/model/test/`), and complete endpoint reference tables.
 - 💻 **[05 — Frontend Dashboard](docs/05-frontend-dashboard.md)**: React 18 + Vite + TailwindCSS component tree, Recharts dynamic charts, Zustand state stores, and TanStack routing.
 - ❓ **[06 — FAQ & Troubleshooting](docs/06-faq-and-troubleshooting.md)**: Answers to core architectural questions, operational detection scenarios, and step-by-step troubleshooting guides.
 
@@ -48,7 +48,7 @@ flowchart TB
         end
 
         subgraph AI_RAG["AI & RAG Engine"]
-            AI_Handler["ai_handler.py (Gemini + OpenAI)"]
+            AI_Handler["ai_handler.py (Ollama gemma:2b)"]
             RAG_Handler["rag_handler.py (Pinecone VDB)"]
         end
     end
@@ -85,7 +85,7 @@ flowchart TB
 │   ├── 01-architecture-and-vision.md   # Project vision, aim, and detection matrix
 │   ├── 02-machine-learning-engine.md   # Detailed scikit-learn models & formulas
 │   ├── 03-live-data-injection-pipeline.md # 10s streaming pipeline & SSE lifecycle
-│   ├── 04-backend-and-api-reference.md # FastAPI routes, Databricks & ChromaDB RAG
+│   ├── 04-backend-and-api-reference.md # FastAPI routes, Databricks & Pinecone RAG
 │   ├── 05-frontend-dashboard.md        # React components, Recharts & Zustand stores
 │   └── 06-faq-and-troubleshooting.md   # FAQs and diagnostic guides
 ├── Final_App/
@@ -97,8 +97,8 @@ flowchart TB
 │   │   ├── ml_router.py                # REST endpoints for risk & demand inference
 │   │   ├── live_data_injection_pipeline/ # Real-time streaming pipeline
 │   │   ├── databricks_client.py        # Databricks SQL connection & caching
-│   │   ├── ai_handler.py               # Gemini & OpenAI LLM handler
-│   │   └── rag_handler.py              # ChromaDB vector store retriever
+│   │   ├── ai_handler.py               # Ollama gemma:2b LLM handler
+│   │   └── rag_handler.py              # Pinecone vector store retriever
 │   └── Frontend/                       # Vite + React Dashboard Application
 │       ├── src/                        # Components, hooks, services, stores, routes
 │       └── vite.config.ts
@@ -131,9 +131,13 @@ DATABRICKS_CATALOG=main
 DATABRICKS_SCHEMA=default
 DATABRICKS_CACHE_TTL_SECONDS=300
 
-# Optional AI Assistant Keys
-GEMINI_API_KEY=your_gemini_api_key
-OPENAI_API_KEY=your_openai_api_key
+# Local RAG assistant (no cloud LLM API keys)
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_LLM_MODEL=gemma:2b
+PINECONE_API_KEY=your_pinecone_api_key_here
+PINECONE_INDEX_NAME=your_index_name_here
+PINECONE_EMBEDDING_MODEL=nomic-embed-text
+PINECONE_MIN_SCORE=0.65
 ```
 
 ### Running Backend & Frontend

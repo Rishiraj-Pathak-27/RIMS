@@ -7,7 +7,7 @@ import { useChatbotStore } from "@/store/chatbot-store";
 export const Route = createFileRoute("/ai-assistant")({
   head: () => ({
     meta: [
-      { title: "AI Assistant · RIMS" },
+      { title: "AI Assistant - RIMS Copilot" },
       {
         name: "description",
         content: "AI workspace for analytics, recommendations, and natural-language control.",

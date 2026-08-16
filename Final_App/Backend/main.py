@@ -1,11 +1,12 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
 import os
 from dotenv import load_dotenv
 from rag_handler import RAGHandler
 from ai_handler import AIHandler
+from structured_analytics import StructuredAnalytics
 from sendData import stream_router
 from databricks_analytics import analytics_router
 from ml_router import ml_router
@@ -17,8 +18,8 @@ load_dotenv()
 
 app = FastAPI(
     title="AI RAG API",
-    description="FastAPI application for AI responses and RAG using Multi-Model LLM (Gemini + OpenAI)",
-    version="2.0.0"
+    description="FastAPI application for Pinecone-grounded answers using local Ollama.",
+    version="2.1.0"
 )
 
 # ---------------------------------------------------------------------------
@@ -45,6 +46,7 @@ app.add_middleware(
 # embeddings, and first-time model loading may require network access.
 rag_handler: RAGHandler | None = None
 ai_handler: AIHandler | None = None
+structured_analytics: StructuredAnalytics | None = None
 
 
 def get_rag_handler() -> RAGHandler:
@@ -57,14 +59,21 @@ def get_rag_handler() -> RAGHandler:
 def get_ai_handler() -> AIHandler:
     global ai_handler
     if ai_handler is None:
-        ai_handler = AIHandler()  # Ollama gemma:2b (primary) + Gemini/OpenAI fallbacks
+        ai_handler = AIHandler()
     return ai_handler
+
+
+def get_structured_analytics() -> StructuredAnalytics:
+    global structured_analytics
+    if structured_analytics is None:
+        structured_analytics = StructuredAnalytics()
+    return structured_analytics
 
 # Models
 class QueryRequest(BaseModel):
     query: str
     use_rag: bool = True
-    top_k: int = 5
+    top_k: int = Field(default=int(os.getenv("RAG_TOP_K", "5")), ge=1, le=10)
 
 class QueryResponse(BaseModel):
     response: str
@@ -145,9 +154,11 @@ async def query(request: QueryRequest):
     """
     try:
         assistant = get_ai_handler()
-        relevant_docs = []
+        # Aggregate questions require complete-data calculations; five semantic
+        # neighbours cannot establish a global maximum, average, or ranking.
+        relevant_docs = get_structured_analytics().answer(request.query) or []
 
-        if request.use_rag:
+        if request.use_rag and not relevant_docs:
             # Retrieve relevant chunks from Pinecone for grounding
             relevant_docs = get_rag_handler().retrieve(request.query, top_k=request.top_k)
 

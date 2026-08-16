@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pinecone import Pinecone
 import requests
 import os
@@ -27,10 +27,14 @@ class RAGHandler:
         """
         self.api_key = os.getenv("PINECONE_API_KEY", "")
         self.index_name = os.getenv("PINECONE_INDEX_NAME", "")
-        self.namespace = os.getenv("PINECONE_NAMESPACE", "") or None
+        # Namespace names are application-defined. This project already stores its
+        # vectors in a namespace, so pass through any configured non-empty value.
+        self.namespace = os.getenv("PINECONE_NAMESPACE", "").strip() or None
         self.text_field = os.getenv("PINECONE_TEXT_FIELD", "text")
         self.embedding_model = os.getenv("PINECONE_EMBEDDING_MODEL", "nomic-embed-text")
         self.ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+        self.min_score = float(os.getenv("PINECONE_MIN_SCORE", "0.65"))
+        self.candidate_multiplier = max(1, int(os.getenv("RAG_CANDIDATE_MULTIPLIER", "3")))
 
         # Placeholder detection
         _placeholders = {"", "your_pinecone_api_key_here", "your_index_name_here"}
@@ -102,34 +106,48 @@ class RAGHandler:
             # Generate query embedding via Ollama
             query_embedding = self._get_embedding(query)
 
-            # Query Pinecone
+            # Request additional candidates and reject weak matches. The nearest vector
+            # is not necessarily relevant enough to ground an answer.
             results = self.index.query(
                 vector=query_embedding,
-                top_k=top_k,
+                top_k=top_k * self.candidate_multiplier,
                 include_metadata=True,
                 namespace=self.namespace,
             )
 
-            # Format results
             documents = []
-            for match in results.get("matches", []):
-                metadata = match.get("metadata", {})
-                content = metadata.get(self.text_field, "")
-                source = self._describe_source(metadata, match.get("id", ""))
-                score = match.get("score", 0)
+            seen_content = set()
+            matches = results.get("matches", []) if hasattr(results, "get") else results.matches
+            for match in matches:
+                metadata = self._match_value(match, "metadata", {}) or {}
+                content = str(metadata.get(self.text_field, "")).strip()
+                score = float(self._match_value(match, "score", 0.0) or 0.0)
+                match_id = str(self._match_value(match, "id", "") or "")
 
-                if content:
-                    documents.append({
-                        "content": content,
-                        "source": source,
-                        "similarity": score,
-                    })
+                if score < self.min_score or not content or content in seen_content:
+                    continue
+
+                seen_content.add(content)
+                documents.append({
+                    "content": content,
+                    "source": self._describe_source(metadata, match_id),
+                    "similarity": score,
+                })
+                if len(documents) >= top_k:
+                    break
 
             return documents
 
         except Exception as e:
             print(f"⚠ Pinecone query failed: {e}")
             return []
+
+    @staticmethod
+    def _match_value(match: Any, key: str, default: Optional[Any] = None) -> Any:
+        """Read fields from both Pinecone dict and SDK match-object responses."""
+        if isinstance(match, dict):
+            return match.get(key, default)
+        return getattr(match, key, default)
 
     def _describe_source(self, metadata: Dict[str, Any], match_id: str) -> str:
         """Build a human-readable label for a retrieved chunk."""
@@ -202,6 +220,7 @@ class RAGHandler:
                 "documents_count": 0,
                 "index_name": self.index_name or "N/A",
                 "embedding_model": "N/A",
+                "min_score": self.min_score,
             }
         try:
             stats = self.index.describe_index_stats()
@@ -215,6 +234,7 @@ class RAGHandler:
                 "index_name": self.index_name,
                 "namespace": self.namespace or "(default)",
                 "embedding_model": self.embedding_model,
+                "min_score": self.min_score,
             }
         except Exception as e:
             return {

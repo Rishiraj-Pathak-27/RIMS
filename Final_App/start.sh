@@ -113,8 +113,6 @@ modules = [
     "pinecone",
     "joblib",
     "pandas",
-    "google.genai",
-    "openai",
 ]
 for module in modules:
     __import__(module)
@@ -206,7 +204,7 @@ check_ollama() {
   local tags
   tags="$(curl --max-time 5 -fsS "$ollama_url/api/tags" 2>/dev/null || true)"
   if [ -z "$tags" ]; then
-    echo "[start.sh] WARNING: Ollama is not reachable at $ollama_url — the copilot will fall back to Gemini/OpenAI." >&2
+    echo "[start.sh] WARNING: Ollama is not reachable at $ollama_url — the copilot cannot generate answers." >&2
     echo "[start.sh]          Start it with: ollama serve" >&2
     return
   fi
