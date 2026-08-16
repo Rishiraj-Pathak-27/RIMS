@@ -40,7 +40,7 @@ export function ChatWindow({ embedded = false }: Props) {
             <Sparkles className="h-4 w-4 text-primary-foreground" />
           </div>
           <div className="leading-tight">
-            <p className="text-sm font-semibold text-foreground">Supply Chain Copilot</p>
+            <p className="text-sm font-semibold text-foreground">RIMS Copilot</p>
             <p className="flex items-center gap-1 text-[10px] text-muted-foreground">
               <span className="live-dot" /> Online
             </p>
