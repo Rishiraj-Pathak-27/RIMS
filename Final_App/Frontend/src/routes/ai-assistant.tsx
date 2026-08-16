@@ -38,7 +38,7 @@ function AssistantPage() {
     <div className="space-y-6">
       <PageHeader
         eyebrow="AI Workspace"
-        title="Supply Chain Copilot"
+        title="RIMS Copilot"
         description="Analytics, explanations, and recommendations via natural language."
       />
 
