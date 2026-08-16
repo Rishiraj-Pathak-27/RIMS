@@ -1,6 +1,6 @@
-# RIMS — Real-Time Inventory & Supply Chain Intelligence System
+# RIMS — Autonomous Supply Chain & Inventory Management System using Databricks & RAG
 
-**RIMS** (Real-Time Inventory Monitoring System) is an enterprise-grade, Databricks-backed supply chain analytics and machine learning platform. It combines live Databricks Gold-layer analytics, real-time multi-model machine learning inference (delivery risk classification, isolation forest anomaly detection, and autoregressive demand forecasting), an automated 10-second live data injection streaming pipeline via Server-Sent Events (SSE), an interactive Gradio model testing interface, and an AI-powered RAG (Retrieval-Augmented Generation) assistant.
+**RIMS** (Autonomous Supply Chain & Inventory Management System using Databricks & RAG) is an enterprise-grade, Databricks-backed supply chain analytics and machine learning platform. It combines live Databricks Gold-layer analytics, real-time multi-model machine learning inference (delivery risk classification, isolation forest anomaly detection, and autoregressive demand forecasting), an automated 10-second live data injection streaming pipeline via Server-Sent Events (SSE), an interactive Gradio model testing interface, and an AI-powered RAG (Retrieval-Augmented Generation) assistant.
 
 ---
 
