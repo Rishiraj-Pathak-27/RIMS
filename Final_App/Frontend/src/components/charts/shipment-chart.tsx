@@ -38,7 +38,7 @@ export function ShipmentChart({ height = 280 }: { height?: number }) {
         <div>
           <h3 className="text-sm font-semibold text-foreground">Shipment Volume — 7 days</h3>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            On time vs. delayed vs. at risk
+            Historical Gold baseline plus the current live stream through today
           </p>
         </div>
       </div>

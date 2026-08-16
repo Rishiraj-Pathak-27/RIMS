@@ -4,6 +4,31 @@
 
 ---
 
+## Current Operations
+
+RIMS keeps its historical analytics and real-time signals deliberately separate, then presents them together in the dashboard:
+
+- **Historical Gold analytics**: The dashboard reads the consolidated Databricks table configured by `DATABRICKS_HISTORICAL_TABLE` (currently `main.default.gold_all_features_clean`). These values are cached according to `DATABRICKS_CACHE_TTL_SECONDS` and remain static between Gold-table refreshes.
+- **Live pipeline**: An independent in-memory SSE pipeline generates a fresh order/risk prediction and demand prediction every 10 seconds. The Gold table is never written to or modified by this pipeline.
+- **Logistics Mix selector**: Historical Gold months are static. **July 2026** is intentionally static sample data. **August 2026** is the live view and refreshes from the current rolling stream buffer only while selected.
+- **Demand Forecast**: Historical Gold demand is shown with the existing live ML forecast overlay.
+- **Shipments**: Headline totals and the shipment table combine historical Gold records with the current live buffer. The volume chart always covers the most recent Monday–Sunday window, adding live classifications to today.
+
+## RIMS Chatbot (RIMS Copilot)
+
+The **AI Assistant** page (`/ai-assistant`) provides a supply-chain copilot for questions about forecasts, inventory, shipment risk, and uploaded operational knowledge.
+
+- It retrieves relevant internal document chunks from **Pinecone** and generates the answer locally through **Ollama** (default model: `gemma:2b`).
+- Answers are grounded only in retrieved records and cite them as `[Record N]`. When the knowledge base has no relevant evidence, the chatbot says so instead of guessing.
+- Use the dashboard's suggested prompts or ask a focused operational question. The frontend calls `POST /query`; `GET /ai-status` reports whether local generation is available.
+- Before using the chatbot, ensure Ollama is running, pull the configured model, and configure the Pinecone variables in `Final_App/Backend/.env`.
+
+```bash
+ollama serve
+ollama pull gemma:2b
+ollama pull nomic-embed-text
+```
+
 ## 📚 Comprehensive Documentation Index (`docs/`)
 
 For detailed technical explanations, mathematical formulations, API specifications, and troubleshooting guides, please refer to the dedicated documentation modules in the [`docs/`](docs/) directory:
@@ -129,6 +154,7 @@ DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/your_warehouse_id
 DATABRICKS_ACCESS_TOKEN=dapi_your_databricks_pat_here
 DATABRICKS_CATALOG=main
 DATABRICKS_SCHEMA=default
+DATABRICKS_HISTORICAL_TABLE=gold_all_features_clean
 DATABRICKS_CACHE_TTL_SECONDS=300
 
 # Local RAG assistant (no cloud LLM API keys)

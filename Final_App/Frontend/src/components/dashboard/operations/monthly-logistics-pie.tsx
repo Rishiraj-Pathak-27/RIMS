@@ -38,6 +38,7 @@ const chartConfig = {
 } satisfies ChartConfig;
 
 type PieDatum = LogisticsSlice & { fill: string };
+const LIVE_MONTH_ID = "aug-2026";
 
 function toPieData(slices: LogisticsSlice[]): PieDatum[] {
   return slices.map((s) => ({
@@ -90,6 +91,8 @@ function LogisticsTooltipBody({
 }
 
 export function MonthlyLogisticsPie({ className }: { className?: string }) {
+  const [monthId, setMonthId] = React.useState<string>("");
+  const [activeIndex, setActiveIndex] = React.useState<number | undefined>(undefined);
   const {
     data: logistics,
     isLoading,
@@ -99,15 +102,20 @@ export function MonthlyLogisticsPie({ className }: { className?: string }) {
     queryKey: ["monthly-logistics"],
     queryFn: getMonthlyLogistics,
     staleTime: 60_000,
+    refetchInterval: monthId === LIVE_MONTH_ID ? 10_000 : false,
   });
-  const [monthId, setMonthId] = React.useState<string>("");
-  const [activeIndex, setActiveIndex] = React.useState<number | undefined>(undefined);
 
   React.useEffect(() => {
     if (!monthId && logistics?.monthOrder.length) {
       setMonthId(logistics.monthOrder[0]);
     }
   }, [logistics?.monthOrder, monthId]);
+
+  React.useEffect(() => {
+    if (monthId === LIVE_MONTH_ID) {
+      void refetch();
+    }
+  }, [monthId, refetch]);
 
   const selectedMonthId = monthId || logistics?.monthOrder[0] || "";
   const entry = selectedMonthId ? logistics?.byMonth[selectedMonthId] : undefined;
@@ -135,6 +143,16 @@ export function MonthlyLogisticsPie({ className }: { className?: string }) {
           <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
             Shipment status by month.
           </p>
+          {entry?.source === "live" ? (
+            <p className="inline-flex w-fit items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" /> Live
+              10-second stream
+            </p>
+          ) : entry?.source === "sample" ? (
+            <p className="text-xs font-medium text-muted-foreground">Static sample data</p>
+          ) : (
+            <p className="text-xs font-medium text-muted-foreground">Historical Gold data</p>
+          )}
         </div>
         <Select value={selectedMonthId} onValueChange={setMonthId}>
           <SelectTrigger className="w-full shrink-0 sm:w-[160px]" aria-label="Select month">
@@ -214,9 +232,11 @@ export function MonthlyLogisticsPie({ className }: { className?: string }) {
         </div>
       </div>
 
-      <p className="mt-4 border-t border-border/50 pt-4 text-xs leading-relaxed text-muted-foreground">
-        {entry.footerInsight}
-      </p>
+      {entry.footerInsight ? (
+        <p className="mt-4 border-t border-border/50 pt-4 text-xs leading-relaxed text-muted-foreground">
+          {entry.footerInsight}
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -212,7 +212,7 @@ export function ForecastChart({ height = 360 }: { height?: number }) {
             )}
           </h3>
           <p className="max-w-xl text-sm leading-relaxed text-muted-foreground">
-            10-week projection with live ML predictions streaming every 10 seconds.
+            Historical Gold demand with live ML predictions streaming every 10 seconds.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0 self-start">

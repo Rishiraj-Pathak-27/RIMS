@@ -33,6 +33,7 @@ function ShipmentsPage() {
     queryKey: ["shipment-analytics"],
     queryFn: getShipmentAnalytics,
     staleTime: 60_000,
+    refetchInterval: 10_000,
   });
   const stats = data?.stats ?? [];
 
@@ -41,7 +42,7 @@ function ShipmentsPage() {
       <PageHeader
         eyebrow="Logistics"
         title="Shipments"
-        description="Real-time tracking with AI-driven ETA and dynamic re-routing."
+        description="Historical Gold shipments with current live tracking and AI-driven ETA."
       />
 
       {isLoading ? <LoadingBlock /> : null}

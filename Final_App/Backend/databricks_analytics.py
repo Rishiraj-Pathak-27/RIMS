@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timedelta
 from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException
@@ -30,6 +31,12 @@ def _inventory_table() -> str:
 
 def _delivery_table() -> str:
     return _table("DATABRICKS_GOLD_DELIVERY_TABLE", "gold_delivery_features")
+
+
+def _historical_gold_table() -> str | None:
+    """Optional consolidated historical source; the live SSE pipeline never reads it."""
+    table_name = os.getenv("DATABRICKS_HISTORICAL_TABLE", "").strip()
+    return get_databricks_client().table(table_name) if table_name else None
 
 
 def _query(statement: str, cache_key: str) -> list[dict[str, Any]]:
@@ -85,6 +92,63 @@ def _call_databricks(builder: Callable[[], Any], fallback_fn: Callable[[], Any] 
             print(f"[databricks_analytics] Databricks query failed ({exc}). Using fallback data.")
             return fallback_fn()
         raise HTTPException(status_code=502, detail=f"Databricks query failed: {exc}") from exc
+
+
+def _build_historical_dashboard_summary(table: str) -> dict[str, Any]:
+    """Build the overview from the supplied consolidated Gold data.
+
+    The real-time dashboard data continues to arrive only through the existing
+    SSE pipeline; these values are a cached, read-only historical layer.
+    """
+    row = _first(_query(f"""
+        SELECT
+          COUNT(*) AS shipments,
+          SUM(CASE WHEN COALESCE(is_late_delivery, 0) = 1 THEN 1 ELSE 0 END) AS late_shipments,
+          AVG(CASE WHEN COALESCE(is_late_delivery, 0) = 0 THEN 1.0 ELSE 0.0 END) * 100 AS on_time_pct,
+          100 - LEAST(100, AVG(ABS(COALESCE(sales, 0) - COALESCE(avg_order_value_30d, 0)) / NULLIF(ABS(sales), 0)) * 100) AS forecast_accuracy,
+          AVG(COALESCE(avg_shipping_cost, 0)) AS cost_per_order,
+          SUM(CASE WHEN COALESCE(profit, 0) < 0 THEN 1 ELSE 0 END) AS loss_orders,
+          MAX(order_date) AS latest_order_date
+        FROM {table}
+    """, "historical-gold-summary"))
+    late = _int(row.get("late_shipments"))
+    losses = _int(row.get("loss_orders"))
+    by_mode = _query(f"""
+        SELECT COALESCE(shipping_mode, 'Unknown mode') AS mode, COUNT(*) AS orders,
+          AVG(CASE WHEN COALESCE(is_late_delivery, 0) = 1 THEN 1.0 ELSE 0.0 END) * 100 AS late_pct
+        FROM {table}
+        GROUP BY shipping_mode
+        ORDER BY late_pct DESC
+        LIMIT 4
+    """, "historical-gold-activity")
+    return {
+        "kpiMetrics": [
+            {"id": "k1", "label": "On-Time Delivery", "value": _pct(row.get("on_time_pct")), "delta": 0, "trend": "flat", "hint": "Historical Gold data"},
+            {"id": "k2", "label": "Forecast Accuracy", "value": _pct(_clamp(_num(row.get("forecast_accuracy")))), "delta": 0, "trend": "flat", "hint": "Historical order features"},
+            {"id": "k3", "label": "Inventory Turns", "value": "—", "delta": 0, "trend": "flat", "hint": "Not available in this source"},
+            {"id": "k4", "label": "Shipments", "value": f"{_int(row.get('shipments')):,}", "delta": 0, "trend": "flat", "hint": f"{late:,} late"},
+            {"id": "k5", "label": "Cost / Order", "value": _money(row.get("cost_per_order")), "delta": 0, "trend": "flat", "hint": "Historical shipping cost"},
+            {"id": "k6", "label": "Open Exceptions", "value": f"{late + losses:,}", "delta": 0, "trend": "flat", "hint": "Late + loss orders"},
+        ],
+        "activityFeed": [
+            {"id": f"a{index + 1}", "timestamp": f"Gold data through {row.get('latest_order_date')}", "agent": "Logistics",
+             "action": f"{mode.get('mode')} late-delivery rate is {_num(mode.get('late_pct')):.1f}% across {_int(mode.get('orders')):,} orders",
+             "status": "warning" if _num(mode.get("late_pct")) > 25 else "success"}
+            for index, mode in enumerate(by_mode)
+        ],
+        "aiInsights": [
+            {"id": "i1", "title": "Historical delivery pressure", "summary": f"{_num(row.get('on_time_pct')):.1f}% of Gold records were delivered on time.", "impact": "High" if late > 1000 else "Medium" if late else "Low", "confidence": 88, "category": "Logistics"},
+            {"id": "i2", "title": "Margin pressure", "summary": f"{losses:,} historical orders have negative profit.", "impact": "High" if losses > 50 else "Medium" if losses else "Low", "confidence": 86, "category": "Demand"},
+        ],
+        "autonomousDecisions": [],
+        "warehouseUtilization": [],
+        "shipmentStats": [
+            {"label": "Shipments", "value": f"{_int(row.get('shipments')):,}"},
+            {"label": "On time", "value": f"{_int(row.get('shipments')) - late:,}"},
+            {"label": "Delayed", "value": f"{late:,}"},
+            {"label": "At risk", "value": f"{losses:,}"},
+        ],
+    }
 
 
 def build_kpi_metrics() -> list[dict[str, Any]]:
@@ -392,7 +456,7 @@ def build_warehouse_utilization() -> list[dict[str, Any]]:
 
 
 def build_shipment_stats() -> list[dict[str, Any]]:
-    delivery = _delivery_table()
+    delivery = _historical_gold_table() or _delivery_table()
     row = _first(
         _query(
             f"""
@@ -412,15 +476,19 @@ def build_shipment_stats() -> list[dict[str, Any]]:
             "shipment-stats",
         )
     )
+    live = _live_shipment_counts() if _historical_gold_table() else {"total": 0, "on_time": 0, "delayed": 0, "at_risk": 0}
     return [
-        {"label": "Shipments", "value": f"{_int(row.get('total')):,}"},
-        {"label": "On time", "value": f"{_int(row.get('on_time')):,}"},
-        {"label": "Delayed", "value": f"{_int(row.get('delayed')):,}"},
-        {"label": "At risk", "value": f"{_int(row.get('at_risk')):,}"},
+        {"label": "Shipments", "value": f"{_int(row.get('total')) + live['total']:,}"},
+        {"label": "On time", "value": f"{_int(row.get('on_time')) + live['on_time']:,}"},
+        {"label": "Delayed", "value": f"{_int(row.get('delayed')) + live['delayed']:,}"},
+        {"label": "At risk", "value": f"{_int(row.get('at_risk')) + live['at_risk']:,}"},
     ]
 
 
 def build_dashboard_summary() -> dict[str, Any]:
+    historical = _historical_gold_table()
+    if historical:
+        return _build_historical_dashboard_summary(historical)
     return {
         "kpiMetrics": build_kpi_metrics(),
         "activityFeed": build_activity_feed(),
@@ -431,8 +499,82 @@ def build_dashboard_summary() -> dict[str, Any]:
     }
 
 
+def _logistics_entry(
+    month_id: str,
+    label: str,
+    *,
+    delivered: int,
+    in_transit: int,
+    delayed: int,
+    at_risk: int,
+    returned: int,
+    footer_insight: str,
+    source: str,
+) -> dict[str, Any]:
+    """Format one Logistics Mix month consistently for static and live sources."""
+    return {
+        "id": month_id,
+        "label": label,
+        "source": source,
+        "footerInsight": footer_insight,
+        "slices": [
+            {"key": "delivered", "name": "Delivered", "value": delivered, "operationalNote": "Arrived without a late-delivery flag"},
+            {"key": "inTransit", "name": "In Transit", "value": in_transit, "operationalNote": "Shipment is currently in transit"},
+            {"key": "delayed", "name": "Delayed", "value": delayed, "operationalNote": "Late-delivery signal"},
+            {"key": "atRisk", "name": "At Risk", "value": at_risk, "operationalNote": "Elevated delivery-risk signal"},
+            {"key": "returned", "name": "Returned", "value": returned, "operationalNote": "Negative-profit order proxy"},
+        ],
+    }
+
+
+def _live_august_2026_logistics() -> dict[str, Any]:
+    """Project the existing 10-second pipeline buffer into the August live view.
+
+    This is a read-only view of the stream engine's existing risk history. It
+    intentionally does not change stream generation, storage, or broadcasting.
+    """
+    from live_data_injection_pipeline.stream_engine import get_risk_history
+
+    history = get_risk_history()
+    delivered = delayed = at_risk = 0
+    for event in history:
+        risk_score = _num(event.get("supply_chain_risk"))
+        if risk_score >= 70:
+            at_risk += 1
+        elif _num(event.get("delivery_risk")) >= 1:
+            delayed += 1
+        else:
+            delivered += 1
+    return _logistics_entry(
+        "aug-2026",
+        "August 2026",
+        delivered=delivered,
+        in_transit=0,
+        delayed=delayed,
+        at_risk=at_risk,
+        returned=0,
+        footer_insight="",
+        source="live",
+    )
+
+
+def _july_2026_sample_logistics() -> dict[str, Any]:
+    """Static sample data, deliberately isolated from the real-time pipeline."""
+    return _logistics_entry(
+        "jul-2026",
+        "July 2026",
+        delivered=1260,
+        in_transit=72,
+        delayed=96,
+        at_risk=38,
+        returned=14,
+        footer_insight="Static July 2026 sample data. It does not receive live pipeline updates.",
+        source="sample",
+    )
+
+
 def build_monthly_logistics() -> dict[str, Any]:
-    delivery = _delivery_table()
+    delivery = _historical_gold_table() or _delivery_table()
     rows = _query(
         f"""
         WITH monthly AS (
@@ -508,10 +650,63 @@ def build_monthly_logistics() -> dict[str, Any]:
                 },
             ],
         }
-    return {"monthOrder": month_order, "byMonth": by_month}
+    july = _july_2026_sample_logistics()
+    august = _live_august_2026_logistics()
+    return {
+        "monthOrder": [august["id"], july["id"], *month_order],
+        "byMonth": {august["id"]: august, july["id"]: july, **by_month},
+    }
+
+
+def _build_historical_demand_intelligence(table: str) -> dict[str, Any]:
+    rows = _query(f"""
+        WITH weekly AS (
+          SELECT date_trunc('week', order_date) AS week_start, SUM(COALESCE(quantity, 0)) AS actual
+          FROM {table}
+          WHERE order_date IS NOT NULL
+          GROUP BY date_trunc('week', order_date)
+        ), ranked AS (
+          SELECT week_start, actual,
+            AVG(actual) OVER (ORDER BY week_start ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS forecast
+          FROM weekly
+        ), latest AS (
+          SELECT * FROM ranked ORDER BY week_start DESC LIMIT 10
+        )
+        SELECT date_format(week_start, 'MMM d') AS period, actual, forecast,
+          forecast + GREATEST(ABS(actual - forecast), ABS(forecast) * 0.08) AS upper,
+          GREATEST(0, forecast - GREATEST(ABS(actual - forecast), ABS(forecast) * 0.08)) AS lower
+        FROM latest
+        ORDER BY week_start ASC
+    """, "historical-gold-demand-forecast")
+    forecast_series = [
+        {"period": row.get("period") or f"Week {index + 1}", "actual": _int(row.get("actual")),
+         "forecast": _int(row.get("forecast")), "upper": _int(row.get("upper")), "lower": _int(row.get("lower"))}
+        for index, row in enumerate(rows)
+    ]
+    errors = [abs(point["forecast"] - point["actual"]) / point["actual"] for point in forecast_series if point["actual"]]
+    accuracy = _clamp(100 - ((sum(errors) / len(errors)) * 100 if errors else 0))
+    latest = forecast_series[-1] if forecast_series else {"actual": 0, "forecast": 0, "upper": 0}
+    demand_delta = ((latest["forecast"] - latest["actual"]) / latest["actual"] * 100) if latest["actual"] else 0
+    risk = "High" if latest["upper"] > latest["forecast"] * 1.25 else "Medium" if latest["upper"] > latest["forecast"] * 1.1 else "Low"
+    return {
+        "forecastSeries": forecast_series,
+        "inventoryHistory": [],
+        "accuracy": _pct(accuracy),
+        "kpiStrip": [
+            {"label": "Accuracy", "value": _pct(accuracy), "trend": "Historical Gold", "trendPositive": True, "icon": "gauge"},
+            {"label": "Demand signal", "value": f"{demand_delta:+.1f}%", "trend": "rolling forecast vs. actual", "trendPositive": demand_delta >= 0, "icon": "trend"},
+            {"label": "Demand risk", "value": risk, "trend": "confidence band", "trendPositive": risk == "Low", "icon": "activity"},
+            {"label": "Data source", "value": "Gold + Live", "trend": "Databricks + SSE", "trendPositive": True, "icon": "brain"},
+        ],
+        "modelConfidence": [],
+        "scenarios": [],
+    }
 
 
 def build_demand_intelligence() -> dict[str, Any]:
+    historical = _historical_gold_table()
+    if historical:
+        return _build_historical_demand_intelligence(historical)
     inventory = _inventory_table()
     forecast_rows = _query(
         f"""
@@ -739,8 +934,95 @@ def build_inventory() -> dict[str, Any]:
     return {"items": items, "history": build_inventory_history()}
 
 
+def _live_shipment_counts() -> dict[str, int]:
+    """Classify the existing rolling live pipeline buffer without altering it."""
+    from live_data_injection_pipeline.stream_engine import get_risk_history
+
+    counts = {"total": 0, "on_time": 0, "delayed": 0, "at_risk": 0}
+    for event in get_risk_history():
+        counts["total"] += 1
+        if _num(event.get("supply_chain_risk")) >= 70:
+            counts["at_risk"] += 1
+        elif _num(event.get("delivery_risk")) >= 1:
+            counts["delayed"] += 1
+        else:
+            counts["on_time"] += 1
+    return counts
+
+
+def _live_shipment_records() -> list[dict[str, Any]]:
+    """Expose current live orders alongside historical Gold shipment rows."""
+    from live_data_injection_pipeline.stream_engine import get_risk_history
+
+    records = []
+    for event in reversed(get_risk_history()):
+        order = event.get("order_summary") or {}
+        risk_score = _int(_num(event.get("supply_chain_risk")))
+        status = "At Risk" if risk_score >= 70 else "Delayed" if _num(event.get("delivery_risk")) >= 1 else "Delivered"
+        records.append(
+            {
+                "id": f"LIVE-{event.get('tick', 'current')}",
+                "origin": order.get("market") or "Live network",
+                "destination": order.get("segment") or "Customer",
+                "carrier": order.get("shipping_mode") or "Live routing",
+                "status": status,
+                "eta": "Live now",
+                "progress": 100,
+                "riskScore": risk_score,
+            }
+        )
+    return records
+
+
 def build_shipment_volume() -> list[dict[str, Any]]:
-    delivery = _delivery_table()
+    delivery = _historical_gold_table() or _delivery_table()
+    if _historical_gold_table():
+        weekday_rows = _query(
+            f"""
+            WITH daily AS (
+              SELECT
+                shipment_date AS ship_day,
+                date_format(shipment_date, 'EEE') AS weekday,
+                SUM(CASE WHEN COALESCE(is_late_delivery, 0) = 0 THEN 1 ELSE 0 END) AS on_time,
+                SUM(CASE WHEN COALESCE(is_late_delivery, 0) = 1 THEN 1 ELSE 0 END) AS delayed,
+                SUM(CASE WHEN COALESCE(is_late_delivery, 0) = 1
+                  AND COALESCE(lead_time, 0) > COALESCE(avg_lead_time_by_mode, lead_time, 0)
+                  THEN 1 ELSE 0 END) AS at_risk
+              FROM {delivery}
+              WHERE shipment_date IS NOT NULL
+              GROUP BY shipment_date
+            )
+            SELECT weekday,
+              AVG(on_time) AS on_time,
+              AVG(delayed) AS delayed,
+              AVG(at_risk) AS at_risk
+            FROM daily
+            GROUP BY weekday
+            """,
+            "historical-shipment-volume-by-weekday",
+        )
+        baseline = {
+            str(row.get("weekday")): {
+                "onTime": _int(row.get("on_time")),
+                "delayed": _int(row.get("delayed")),
+                "atRisk": _int(row.get("at_risk")),
+            }
+            for row in weekday_rows
+        }
+        today = datetime.now().date()
+        live = _live_shipment_counts()
+        volume = []
+        for offset in range(6, -1, -1):
+            day = today - timedelta(days=offset)
+            label = day.strftime("%a")
+            values = dict(baseline.get(label, {"onTime": 0, "delayed": 0, "atRisk": 0}))
+            if offset == 0:
+                values["onTime"] += live["on_time"]
+                values["delayed"] += live["delayed"]
+                values["atRisk"] += live["at_risk"]
+            volume.append({"day": label, **values})
+        return volume
+
     rows = _query(
         f"""
         WITH daily AS (
@@ -780,7 +1062,7 @@ def build_shipment_volume() -> list[dict[str, Any]]:
 
 
 def build_shipments() -> dict[str, Any]:
-    delivery = _delivery_table()
+    delivery = _historical_gold_table() or _delivery_table()
     rows = _query(
         f"""
         SELECT
@@ -823,8 +1105,9 @@ def build_shipments() -> dict[str, Any]:
                 "riskScore": _int(risk_score),
             }
         )
+    live_shipments = _live_shipment_records() if _historical_gold_table() else []
     return {
-        "shipments": shipments,
+        "shipments": [*live_shipments, *shipments],
         "stats": build_shipment_stats(),
         "volume": build_shipment_volume(),
     }
@@ -1249,4 +1532,3 @@ async def inventory():
 @analytics_router.get("/api/shipments")
 async def shipments():
     return await run_in_threadpool(lambda: _call_databricks(build_shipments, build_shipments_fallback))
-
