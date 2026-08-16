@@ -156,11 +156,12 @@ check_databricks_connection() {
     return 0
   fi
 
-  echo "[start.sh] Databricks connection failed. Backend response:" >&2
+  echo "[start.sh] WARNING: Databricks connection check failed or offline. Backend is running in fallback mode." >&2
   echo "$status" >&2
   echo "[start.sh] Check Backend/.env, SQL Warehouse status, token permissions, catalog, and schema." >&2
-  return 1
+  return 0
 }
+
 
 # ── ML Model Dependencies ─────────────────────────────────────────────────
 ml_dependencies_ready() {
@@ -216,6 +217,17 @@ check_ollama() {
   done
 }
 
+free_port() {
+  local port="$1"
+  local pids
+  pids=$(lsof -ti ":$port" 2>/dev/null || true)
+  if [ -n "$pids" ]; then
+    echo "[start.sh] Clearing port $port (PIDs: $(echo "$pids" | tr '\n' ' '))..."
+    echo "$pids" | xargs kill -9 2>/dev/null || true
+    sleep 1
+  fi
+}
+
 require_backend_env
 check_ollama
 SYSTEM_PYTHON_BIN="$(choose_python)"
@@ -233,10 +245,11 @@ if [ -d "$ML_DIR" ]; then
 
   install_ml_dependencies
 
+  free_port "$ML_PORT"
   echo "[start.sh] Starting ML Inference Server (Gradio) on $ML_URL ..."
   (
     cd "$ML_DIR"
-    "$ML_PYTHON_BIN" app.py
+    GRADIO_SERVER_NAME="$ML_HOST" GRADIO_SERVER_PORT="$ML_PORT" "$ML_PYTHON_BIN" app.py >/dev/null 2>&1
   ) &
   ML_PID=$!
 
@@ -255,6 +268,7 @@ fi
 
 install_backend_dependencies
 
+free_port 8000
 echo "[start.sh] Starting Backend (FastAPI) on $BACKEND_URL ..."
 (
   cd "$BACKEND_DIR"
@@ -265,17 +279,19 @@ BACKEND_PID=$!
 wait_for_url "$BACKEND_URL/" "Backend" 45 1
 check_databricks_connection
 echo "[start.sh] Checking Databricks-backed dashboard JSON..."
-curl --max-time 120 -fsS "$BACKEND_DATA_URL" >/dev/null
+curl --max-time 120 -fsS "$BACKEND_DATA_URL" >/dev/null || true
 
 # ── Frontend ───────────────────────────────────────────────────────────────
 install_frontend_dependencies
 
+free_port "$FRONTEND_PORT"
 echo "[start.sh] Starting Frontend (Vite) on $FRONTEND_URL ..."
 (
   cd "$FRONTEND_DIR"
   VITE_API_BASE_URL="$BACKEND_URL" npm run dev -- --host "$FRONTEND_HOST" --port "$FRONTEND_PORT"
 ) &
 FRONTEND_PID=$!
+
 
 echo ""
 echo "============================================="

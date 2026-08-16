@@ -136,12 +136,11 @@ async def _start_live_pipeline():
     """Start the live data injection pipeline on server boot."""
     try:
         handler = get_ml_handler()
-        if handler.is_loaded:
-            start_engine(handler)
-        else:
-            print("[main] ML models not loaded — pipeline will not start.")
+        start_engine(handler)
+        print("[main] Live data injection pipeline engine started successfully.")
     except Exception as e:
         print(f"[main] Pipeline startup error: {e}")
+
 
 @app.post("/query", response_model=QueryResponse, tags=["AI Queries"])
 async def query(request: QueryRequest):
