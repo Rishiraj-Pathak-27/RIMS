@@ -194,7 +194,13 @@ install_ml_dependencies() {
   )
 }
 
-check_ollama() {
+ensure_ollama_and_models() {
+  if ! command -v ollama >/dev/null 2>&1; then
+    echo "[start.sh] WARNING: 'ollama' CLI is not installed on this system." >&2
+    echo "[start.sh]          Install Ollama from https://ollama.com to enable local AI RAG copilot." >&2
+    return 0
+  fi
+
   local ollama_url="${OLLAMA_BASE_URL:-$(env_value OLLAMA_BASE_URL)}"
   ollama_url="${ollama_url:-http://localhost:11434}"
   local llm_model="${OLLAMA_LLM_MODEL:-$(env_value OLLAMA_LLM_MODEL)}"
@@ -203,16 +209,39 @@ check_ollama() {
   embed_model="${embed_model:-nomic-embed-text}"
 
   local tags
-  tags="$(curl --max-time 5 -fsS "$ollama_url/api/tags" 2>/dev/null || true)"
+  tags="$(curl --max-time 3 -fsS "$ollama_url/api/tags" 2>/dev/null || true)"
   if [ -z "$tags" ]; then
-    echo "[start.sh] WARNING: Ollama is not reachable at $ollama_url — the copilot cannot generate answers." >&2
-    echo "[start.sh]          Start it with: ollama serve" >&2
-    return
+    echo "[start.sh] Starting Ollama server (ollama serve)..."
+    ollama serve >/dev/null 2>&1 &
+    OLLAMA_PID=$!
+
+    local retries=15
+    while [ $retries -gt 0 ]; do
+      sleep 1
+      tags="$(curl --max-time 2 -fsS "$ollama_url/api/tags" 2>/dev/null || true)"
+      if [ -n "$tags" ]; then
+        echo "[start.sh] ✓ Ollama server started on $ollama_url."
+        break
+      fi
+      retries=$((retries - 1))
+    done
+  else
+    echo "[start.sh] ✓ Ollama server is already running on $ollama_url."
+  fi
+
+  if [ -z "$tags" ]; then
+    echo "[start.sh] WARNING: Could not connect to Ollama server at $ollama_url." >&2
+    return 0
   fi
 
   for model in "$llm_model" "$embed_model"; do
-    if ! echo "$tags" | grep -q "\"${model%%:*}"; then
-      echo "[start.sh] WARNING: Ollama model '$model' is missing. Run: ollama pull $model" >&2
+    [ -z "$model" ] && continue
+    local prefix="${model%%:*}"
+    if echo "$tags" | grep -q "\"${prefix}"; then
+      echo "[start.sh] ✓ Ollama model '$model' is ready."
+    else
+      echo "[start.sh] Ollama model '$model' is missing. Auto-pulling model '$model'..."
+      ollama pull "$model" || echo "[start.sh] WARNING: Failed to pull model '$model'." >&2
     fi
   done
 }
@@ -229,7 +258,7 @@ free_port() {
 }
 
 require_backend_env
-check_ollama
+ensure_ollama_and_models
 SYSTEM_PYTHON_BIN="$(choose_python)"
 PYTHON_BIN="$BACKEND_VENV_DIR/bin/python"
 ML_PYTHON_BIN="$ML_VENV_DIR/bin/python"

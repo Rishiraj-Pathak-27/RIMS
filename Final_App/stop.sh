@@ -13,11 +13,15 @@
 
 BACKEND_ONLY=false
 FRONTEND_ONLY=false
+ML_ONLY=false
+OLLAMA_ONLY=false
 
 for arg in "$@"; do
   case "$arg" in
     --backend-only)  BACKEND_ONLY=true ;;
     --frontend-only) FRONTEND_ONLY=true ;;
+    --ml-only)       ML_ONLY=true ;;
+    --ollama-only)   OLLAMA_ONLY=true ;;
   esac
 done
 
@@ -77,15 +81,60 @@ kill_frontend() {
   fi
 }
 
+kill_ml() {
+  echo "[stop.sh] Stopping ML Inference Server (gradio / app.py)..."
+  local killed_ml=false
+
+  ML_PIDS=$(pgrep -f "python.*app\.py" 2>/dev/null || true)
+  if [ -n "$ML_PIDS" ]; then
+    echo "$ML_PIDS" | xargs kill 2>/dev/null && echo "[stop.sh] ✓ Killed app.py (PID: $ML_PIDS)"
+    killed_ml=true
+    killed_any=true
+  fi
+
+  PORT_PID=$(lsof -ti tcp:7860 2>/dev/null || true)
+  if [ -n "$PORT_PID" ]; then
+    echo "$PORT_PID" | xargs kill -9 2>/dev/null && echo "[stop.sh] ✓ Freed port 7860 (PID: $PORT_PID)"
+    killed_ml=true
+    killed_any=true
+  fi
+
+  if [ "$killed_ml" = false ]; then
+    echo "[stop.sh] No ML Inference processes found."
+  fi
+}
+
+kill_ollama() {
+  echo "[stop.sh] Stopping Ollama server..."
+  local killed_ol=false
+
+  OLLAMA_PIDS=$(pgrep -f "ollama serve" 2>/dev/null || true)
+  if [ -n "$OLLAMA_PIDS" ]; then
+    echo "$OLLAMA_PIDS" | xargs kill 2>/dev/null && echo "[stop.sh] ✓ Killed ollama serve (PID: $OLLAMA_PIDS)"
+    killed_ol=true
+    killed_any=true
+  fi
+
+  if [ "$killed_ol" = false ]; then
+    echo "[stop.sh] No Ollama server processes found."
+  fi
+}
+
 # ── Main ───────────────────────────────────────────────────────────────────
 if [ "$BACKEND_ONLY" = true ]; then
   kill_backend
 elif [ "$FRONTEND_ONLY" = true ]; then
   kill_frontend
+elif [ "$ML_ONLY" = true ]; then
+  kill_ml
+elif [ "$OLLAMA_ONLY" = true ]; then
+  kill_ollama
 else
   kill_backend
   kill_frontend
+  kill_ml
 fi
 
 echo ""
 echo "[stop.sh] Done."
+
