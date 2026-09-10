@@ -528,32 +528,23 @@ def _logistics_entry(
 
 
 def _live_august_2026_logistics() -> dict[str, Any]:
-    """Project the existing 10-second pipeline buffer into the August live view.
-
-    This is a read-only view of the stream engine's existing risk history. It
-    intentionally does not change stream generation, storage, or broadcasting.
-    """
+    """Project every live order in this service session into the August view."""
     from live_data_injection_pipeline.stream_engine import get_risk_history
 
     history = get_risk_history()
-    delivered = delayed = at_risk = 0
+    counts = {"Delivered": 0, "In Transit": 0, "Delayed": 0, "At Risk": 0, "Returned": 0}
     for event in history:
-        risk_score = _num(event.get("supply_chain_risk"))
-        if risk_score >= 70:
-            at_risk += 1
-        elif _num(event.get("delivery_risk")) >= 1:
-            delayed += 1
-        else:
-            delivered += 1
+        status = str(event.get("shipment_status") or "In Transit")
+        counts[status if status in counts else "In Transit"] += 1
     return _logistics_entry(
         "aug-2026",
         "August 2026",
-        delivered=delivered,
-        in_transit=0,
-        delayed=delayed,
-        at_risk=at_risk,
-        returned=0,
-        footer_insight="",
+        delivered=counts["Delivered"],
+        in_transit=counts["In Transit"],
+        delayed=counts["Delayed"],
+        at_risk=counts["At Risk"],
+        returned=counts["Returned"],
+        footer_insight=f"{len(history):,} live orders received this month. New orders and statuses arrive every 15 seconds.",
         source="live",
     )
 
@@ -968,15 +959,16 @@ def build_inventory() -> dict[str, Any]:
 
 
 def _live_shipment_counts() -> dict[str, int]:
-    """Classify the existing rolling live pipeline buffer without altering it."""
+    """Classify every live order without capping the dashboard total."""
     from live_data_injection_pipeline.stream_engine import get_risk_history
 
     counts = {"total": 0, "on_time": 0, "delayed": 0, "at_risk": 0}
     for event in get_risk_history():
         counts["total"] += 1
-        if _num(event.get("supply_chain_risk")) >= 70:
+        status = event.get("shipment_status")
+        if status == "At Risk":
             counts["at_risk"] += 1
-        elif _num(event.get("delivery_risk")) >= 1:
+        elif status == "Delayed":
             counts["delayed"] += 1
         else:
             counts["on_time"] += 1
@@ -991,7 +983,7 @@ def _live_shipment_records() -> list[dict[str, Any]]:
     for event in reversed(get_risk_history()):
         order = event.get("order_summary") or {}
         risk_score = _int(_num(event.get("supply_chain_risk")))
-        status = "At Risk" if risk_score >= 70 else "Delayed" if _num(event.get("delivery_risk")) >= 1 else "Delivered"
+        status = str(event.get("shipment_status") or "In Transit")
         records.append(
             {
                 "id": f"LIVE-{event.get('tick', 'current')}",
@@ -1000,7 +992,7 @@ def _live_shipment_records() -> list[dict[str, Any]]:
                 "carrier": order.get("shipping_mode") or "Live routing",
                 "status": status,
                 "eta": "Live now",
-                "progress": 100,
+                "progress": 100 if status == "Delivered" else 72 if status == "In Transit" else 46,
                 "riskScore": risk_score,
             }
         )

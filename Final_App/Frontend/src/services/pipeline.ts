@@ -14,6 +14,7 @@ export interface LiveRiskTick {
     lead_time: number;
     defect_rate: number;
   };
+  shipment_status: "Delivered" | "In Transit" | "Delayed" | "At Risk" | "Returned";
   delivery_risk: number;
   anomaly_prediction: string;
   anomaly_score: number;

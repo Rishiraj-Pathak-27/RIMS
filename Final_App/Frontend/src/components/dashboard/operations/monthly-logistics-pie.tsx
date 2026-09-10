@@ -102,7 +102,7 @@ export function MonthlyLogisticsPie({ className }: { className?: string }) {
     queryKey: ["monthly-logistics"],
     queryFn: getMonthlyLogistics,
     staleTime: 60_000,
-    refetchInterval: monthId === LIVE_MONTH_ID ? 10_000 : false,
+    refetchInterval: monthId === LIVE_MONTH_ID ? 15_000 : false,
   });
 
   React.useEffect(() => {
@@ -146,7 +146,7 @@ export function MonthlyLogisticsPie({ className }: { className?: string }) {
           {entry?.source === "live" ? (
             <p className="inline-flex w-fit items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" /> Live
-              10-second stream
+              Data Stream
             </p>
           ) : entry?.source === "sample" ? (
             <p className="text-xs font-medium text-muted-foreground">Static sample data</p>

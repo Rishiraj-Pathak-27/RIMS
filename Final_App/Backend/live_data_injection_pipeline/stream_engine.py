@@ -6,6 +6,7 @@ Each tick: generate order → ML inference → broadcast to all SSE subscribers.
 
 import asyncio
 import json
+import random
 import time
 from datetime import datetime, timezone
 from typing import Set
@@ -18,12 +19,14 @@ from live_data_injection_pipeline.data_generator import generate_order, generate
 # Connected SSE client queues
 _subscribers: Set[Queue] = set()
 
-# Recent history for charts (rolling window)
+# Live order ledger and recent demand history.  The order ledger is intentionally
+# unbounded for the lifetime of the running service so the dashboard can keep
+# adding current-month orders instead of flattening after a fixed threshold.
 _risk_history: list[dict] = []
 _demand_history: list[dict] = []
 
-MAX_HISTORY = 30          # Keep last 30 ticks (~5 minutes at 10s)
-TICK_INTERVAL = 10        # Seconds between each data injection
+MAX_DEMAND_HISTORY = 30   # Demand-chart window only; it does not limit orders.
+TICK_INTERVAL = 15        # Seconds between each live order/status update
 
 _engine_task: asyncio.Task | None = None
 
@@ -34,6 +37,15 @@ def get_risk_history() -> list[dict]:
 
 def get_demand_history() -> list[dict]:
     return list(_demand_history)
+
+
+def _shipment_status() -> str:
+    """Pick a realistic mix of lifecycle states for each incoming order."""
+    return random.choices(
+        population=["Delivered", "In Transit", "Delayed", "At Risk", "Returned"],
+        weights=[50, 25, 13, 8, 4],
+        k=1,
+    )[0]
 
 
 def subscribe() -> Queue:
@@ -91,12 +103,11 @@ async def _tick(ml_handler) -> None:
             "lead_time": order["lead_time"],
             "defect_rate": order["avg_defect_rate"],
         },
+        "shipment_status": _shipment_status(),
         **risk_result,
     }
 
     _risk_history.append(risk_event)
-    if len(_risk_history) > MAX_HISTORY:
-        _risk_history.pop(0)
 
     # ── 2. Demand forecast on generated lag inputs ──────────────────
     demand_input = generate_demand_input()
@@ -124,7 +135,7 @@ async def _tick(ml_handler) -> None:
     }
 
     _demand_history.append(demand_event)
-    if len(_demand_history) > MAX_HISTORY:
+    if len(_demand_history) > MAX_DEMAND_HISTORY:
         _demand_history.pop(0)
 
     # ── 3. Broadcast combined event ─────────────────────────────────

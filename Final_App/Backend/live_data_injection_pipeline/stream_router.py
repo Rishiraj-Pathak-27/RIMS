@@ -26,7 +26,7 @@ pipeline_router = APIRouter(
 
 @pipeline_router.get("/status")
 async def pipeline_status():
-    """Return pipeline status and history lengths."""
+    """Return pipeline status and live-order totals."""
     return {
         "status": "running",
         "tick_interval_seconds": TICK_INTERVAL,
@@ -37,7 +37,7 @@ async def pipeline_status():
 
 @pipeline_router.get("/history/risk")
 async def risk_history():
-    """Return the recent risk prediction history (last ~5 min)."""
+    """Return every live order collected during this service session."""
     return get_risk_history()
 
 
@@ -51,7 +51,7 @@ async def demand_history():
 async def sse_stream(request: Request):
     """
     Server-Sent Events endpoint.
-    Clients connect here and receive a JSON event every ~10 seconds
+    Clients connect here and receive a JSON event every ~15 seconds
     with fresh ML predictions.
     """
     queue = subscribe()
@@ -59,7 +59,9 @@ async def sse_stream(request: Request):
     async def event_generator():
         try:
             # Send initial history burst so the client has data immediately
-            risk_hist = get_risk_history()
+            # Charts only need recent points on connection. The complete order
+            # ledger remains available to dashboard analytics for running totals.
+            risk_hist = get_risk_history()[-30:]
             demand_hist = get_demand_history()
 
             init_event = json.dumps({
