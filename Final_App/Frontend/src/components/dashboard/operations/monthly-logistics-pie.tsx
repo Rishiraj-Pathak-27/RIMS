@@ -39,6 +39,7 @@ const chartConfig = {
 
 type PieDatum = LogisticsSlice & { fill: string };
 const LIVE_MONTH_ID = "aug-2026";
+const SAMPLE_MONTH_ID = "jul-2026";
 
 function toPieData(slices: LogisticsSlice[]): PieDatum[] {
   return slices.map((s) => ({
@@ -107,7 +108,10 @@ export function MonthlyLogisticsPie({ className }: { className?: string }) {
 
   React.useEffect(() => {
     if (!monthId && logistics?.monthOrder.length) {
-      setMonthId(logistics.monthOrder[0]);
+      const historicalMonthId = logistics.monthOrder.find(
+        (id) => id !== LIVE_MONTH_ID && id !== SAMPLE_MONTH_ID,
+      );
+      setMonthId(historicalMonthId ?? logistics.monthOrder[0]);
     }
   }, [logistics?.monthOrder, monthId]);
 
@@ -117,7 +121,11 @@ export function MonthlyLogisticsPie({ className }: { className?: string }) {
     }
   }, [monthId, refetch]);
 
-  const selectedMonthId = monthId || logistics?.monthOrder[0] || "";
+  const selectedMonthId =
+    monthId ||
+    logistics?.monthOrder.find((id) => id !== LIVE_MONTH_ID && id !== SAMPLE_MONTH_ID) ||
+    logistics?.monthOrder[0] ||
+    "";
   const entry = selectedMonthId ? logistics?.byMonth[selectedMonthId] : undefined;
   const data = React.useMemo(() => toPieData(entry?.slices ?? []), [entry?.slices]);
   const total = React.useMemo(() => data.reduce((s, d) => s + d.value, 0), [data]);

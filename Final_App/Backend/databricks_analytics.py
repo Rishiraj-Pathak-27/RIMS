@@ -587,8 +587,6 @@ def build_monthly_logistics() -> dict[str, Any]:
           FROM {delivery}
           WHERE order_date IS NOT NULL
           GROUP BY date_trunc('month', order_date)
-          ORDER BY month_start DESC
-          LIMIT 6
         )
         SELECT *
         FROM monthly
