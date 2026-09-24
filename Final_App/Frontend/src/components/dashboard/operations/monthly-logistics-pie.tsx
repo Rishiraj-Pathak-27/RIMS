@@ -38,8 +38,7 @@ const chartConfig = {
 } satisfies ChartConfig;
 
 type PieDatum = LogisticsSlice & { fill: string };
-const LIVE_MONTH_ID = "aug-2026";
-const SAMPLE_MONTH_ID = "jul-2026";
+const LIVE_MONTH_IDS = new Set(["mar-2026", "apr-2026"]);
 
 function toPieData(slices: LogisticsSlice[]): PieDatum[] {
   return slices.map((s) => ({
@@ -91,7 +90,13 @@ function LogisticsTooltipBody({
   );
 }
 
-export function MonthlyLogisticsPie({ className }: { className?: string }) {
+export function MonthlyLogisticsPie({
+  className,
+  onMonthChange,
+}: {
+  className?: string;
+  onMonthChange?: (monthId: string) => void;
+}) {
   const [monthId, setMonthId] = React.useState<string>("");
   const [activeIndex, setActiveIndex] = React.useState<number | undefined>(undefined);
   const {
@@ -103,27 +108,31 @@ export function MonthlyLogisticsPie({ className }: { className?: string }) {
     queryKey: ["monthly-logistics"],
     queryFn: getMonthlyLogistics,
     staleTime: 60_000,
-    refetchInterval: monthId === LIVE_MONTH_ID ? 15_000 : false,
+    refetchInterval: LIVE_MONTH_IDS.has(monthId) ? 15_000 : false,
   });
 
   React.useEffect(() => {
     if (!monthId && logistics?.monthOrder.length) {
-      const historicalMonthId = logistics.monthOrder.find(
-        (id) => id !== LIVE_MONTH_ID && id !== SAMPLE_MONTH_ID,
-      );
+      const historicalMonthId = logistics.monthOrder.find((id) => !LIVE_MONTH_IDS.has(id));
       setMonthId(historicalMonthId ?? logistics.monthOrder[0]);
     }
   }, [logistics?.monthOrder, monthId]);
 
   React.useEffect(() => {
-    if (monthId === LIVE_MONTH_ID) {
+    if (monthId) {
+      onMonthChange?.(monthId);
+    }
+  }, [monthId, onMonthChange]);
+
+  React.useEffect(() => {
+    if (LIVE_MONTH_IDS.has(monthId)) {
       void refetch();
     }
   }, [monthId, refetch]);
 
   const selectedMonthId =
     monthId ||
-    logistics?.monthOrder.find((id) => id !== LIVE_MONTH_ID && id !== SAMPLE_MONTH_ID) ||
+    logistics?.monthOrder.find((id) => !LIVE_MONTH_IDS.has(id)) ||
     logistics?.monthOrder[0] ||
     "";
   const entry = selectedMonthId ? logistics?.byMonth[selectedMonthId] : undefined;
@@ -162,7 +171,13 @@ export function MonthlyLogisticsPie({ className }: { className?: string }) {
             <p className="text-xs font-medium text-muted-foreground">Historical Gold data</p>
           )}
         </div>
-        <Select value={selectedMonthId} onValueChange={setMonthId}>
+        <Select
+          value={selectedMonthId}
+          onValueChange={(value) => {
+            setMonthId(value);
+            onMonthChange?.(value);
+          }}
+        >
           <SelectTrigger className="w-full shrink-0 sm:w-[160px]" aria-label="Select month">
             <SelectValue placeholder="Month" />
           </SelectTrigger>
