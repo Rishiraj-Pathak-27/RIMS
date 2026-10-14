@@ -29,7 +29,7 @@ The backend connects securely to a Databricks SQL Warehouse using `databricks-sq
 3. `gold_delivery_features`: Delivery statuses (delivered, in-transit, delayed, at-risk), lead times, and carrier performance.
 
 ### Performance Caching
-To maintain high responsiveness and reduce Databricks warehouse compute costs, query results are cached in-memory with a configurable TTL (`DATABRICKS_CACHE_TTL_SECONDS=300`).
+To maintain high responsiveness while making newly loaded Gold data visible promptly, query results are cached in-memory with a configurable TTL (use `DATABRICKS_CACHE_TTL_SECONDS=60` for this dashboard).
 
 ---
 

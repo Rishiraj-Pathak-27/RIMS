@@ -73,7 +73,11 @@ function Overview() {
               <KpiGrid metrics={overviewKpiMetrics} className="h-full w-full" />
             </div>
             <div className="min-w-0">
-              <MonthlyLogisticsPie className="h-full w-full" onMonthChange={setSelectedMonthId} />
+              <MonthlyLogisticsPie
+                className="h-full w-full"
+                monthId={selectedMonthId}
+                onMonthChange={setSelectedMonthId}
+              />
             </div>
           </div>
         )}

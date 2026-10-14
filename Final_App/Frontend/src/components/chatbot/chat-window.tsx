@@ -42,7 +42,7 @@ export function ChatWindow({ embedded = false }: Props) {
           <div className="leading-tight">
             <p className="text-sm font-semibold text-foreground">RIMS Copilot</p>
             <p className="flex items-center gap-1 text-[10px] text-muted-foreground">
-              <span className="live-dot" /> Online
+              <span className="live-dot" /> Grounded operations support
             </p>
           </div>
         </div>
@@ -78,7 +78,7 @@ export function ChatWindow({ embedded = false }: Props) {
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask about forecasts, risks, inventory…"
+            placeholder="Ask with SKU, site, date, or incident details…"
             className="flex-1 rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:bg-surface focus:outline-none"
           />
           <button
@@ -89,6 +89,10 @@ export function ChatWindow({ embedded = false }: Props) {
             <Send className="h-4 w-4" />
           </button>
         </form>
+        <p className="text-[10px] leading-snug text-muted-foreground">
+          For critical incidents, include the affected SKU, location, and timeframe. Responses cite the
+          retrieved records; escalate through your approved operating procedure.
+        </p>
       </div>
     </div>
   );

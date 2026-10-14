@@ -161,7 +161,11 @@ async def query(request: QueryRequest):
             # Retrieve relevant chunks from Pinecone for grounding
             relevant_docs = get_rag_handler().retrieve(request.query, top_k=request.top_k)
 
-        result = assistant.generate(query=request.query, context=relevant_docs or None)
+        result = assistant.generate(
+            query=request.query,
+            context=relevant_docs or None,
+            max_tokens=int(os.getenv("RAG_MAX_ANSWER_TOKENS", "1100")),
+        )
 
         sources = [
             f"Record {i}: {doc.get('source', 'Knowledge Base')} "

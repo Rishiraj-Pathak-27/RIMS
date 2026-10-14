@@ -8,7 +8,7 @@
 
 RIMS keeps its historical analytics and real-time signals deliberately separate, then presents them together in the dashboard:
 
-- **Historical Gold analytics**: The dashboard reads the consolidated Databricks table configured by `DATABRICKS_HISTORICAL_TABLE` (currently `main.default.gold_all_features_clean`). These values are cached according to `DATABRICKS_CACHE_TTL_SECONDS` and remain static between Gold-table refreshes.
+- **Historical Gold analytics**: The dashboard reads the consolidated Databricks table configured by `DATABRICKS_HISTORICAL_TABLE` (for example `main.default.gold_integrated`). Selected months are filtered at the source, and `/api/databricks-status` verifies the configured table and its latest order date.
 - **Live pipeline**: An independent in-memory SSE pipeline generates a fresh order/risk prediction and demand prediction every 10 seconds. The Gold table is never written to or modified by this pipeline.
 - **Logistics Mix selector**: Historical Gold months are static. **July 2026** is intentionally static sample data. **August 2026** is the live view and refreshes from the current rolling stream buffer only while selected.
 - **Demand Forecast**: Historical Gold demand is shown with the existing live ML forecast overlay.
@@ -154,8 +154,12 @@ DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/your_warehouse_id
 DATABRICKS_ACCESS_TOKEN=dapi_your_databricks_pat_here
 DATABRICKS_CATALOG=main
 DATABRICKS_SCHEMA=default
-DATABRICKS_HISTORICAL_TABLE=gold_all_features_clean
-DATABRICKS_CACHE_TTL_SECONDS=300
+DATABRICKS_HISTORICAL_TABLE=gold_integrated
+DATABRICKS_CACHE_TTL_SECONDS=60
+
+# RAG response quality
+RAG_TOP_K=5
+RAG_MAX_ANSWER_TOKENS=1100
 
 # Local RAG assistant (no cloud LLM API keys)
 OLLAMA_BASE_URL=http://localhost:11434

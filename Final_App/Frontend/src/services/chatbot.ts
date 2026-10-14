@@ -24,7 +24,6 @@ export async function askAssistant(prompt: string): Promise<ChatMessage> {
       body: JSON.stringify({
         query: prompt,
         use_rag: true,
-        top_k: 5,
       }),
     });
 

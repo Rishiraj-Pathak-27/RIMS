@@ -92,12 +92,13 @@ function LogisticsTooltipBody({
 
 export function MonthlyLogisticsPie({
   className,
+  monthId,
   onMonthChange,
 }: {
   className?: string;
-  onMonthChange?: (monthId: string) => void;
+  monthId: string;
+  onMonthChange: (monthId: string) => void;
 }) {
-  const [monthId, setMonthId] = React.useState<string>("");
   const [activeIndex, setActiveIndex] = React.useState<number | undefined>(undefined);
   const {
     data: logistics,
@@ -113,16 +114,9 @@ export function MonthlyLogisticsPie({
 
   React.useEffect(() => {
     if (!monthId && logistics?.monthOrder.length) {
-      const historicalMonthId = logistics.monthOrder.find((id) => !LIVE_MONTH_IDS.has(id));
-      setMonthId(historicalMonthId ?? logistics.monthOrder[0]);
+      onMonthChange(logistics.monthOrder[0]);
     }
-  }, [logistics?.monthOrder, monthId]);
-
-  React.useEffect(() => {
-    if (monthId) {
-      onMonthChange?.(monthId);
-    }
-  }, [monthId, onMonthChange]);
+  }, [logistics?.monthOrder, monthId, onMonthChange]);
 
   React.useEffect(() => {
     if (LIVE_MONTH_IDS.has(monthId)) {
@@ -130,11 +124,7 @@ export function MonthlyLogisticsPie({
     }
   }, [monthId, refetch]);
 
-  const selectedMonthId =
-    monthId ||
-    logistics?.monthOrder.find((id) => !LIVE_MONTH_IDS.has(id)) ||
-    logistics?.monthOrder[0] ||
-    "";
+  const selectedMonthId = monthId || logistics?.monthOrder[0] || "";
   const entry = selectedMonthId ? logistics?.byMonth[selectedMonthId] : undefined;
   const data = React.useMemo(() => toPieData(entry?.slices ?? []), [entry?.slices]);
   const total = React.useMemo(() => data.reduce((s, d) => s + d.value, 0), [data]);
@@ -162,11 +152,15 @@ export function MonthlyLogisticsPie({
           </p>
           {entry?.source === "live" ? (
             <p className="inline-flex w-fit items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" /> Live
-              Data Stream
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" /> Live Data
+              Stream
             </p>
           ) : entry?.source === "sample" ? (
             <p className="text-xs font-medium text-muted-foreground">Static sample data</p>
+          ) : entry?.source === "fallback" ? (
+            <p className="text-xs font-medium text-amber-600 dark:text-amber-400">
+              Databricks unavailable — local fallback data
+            </p>
           ) : (
             <p className="text-xs font-medium text-muted-foreground">Historical Gold data</p>
           )}
@@ -174,8 +168,7 @@ export function MonthlyLogisticsPie({
         <Select
           value={selectedMonthId}
           onValueChange={(value) => {
-            setMonthId(value);
-            onMonthChange?.(value);
+            onMonthChange(value);
           }}
         >
           <SelectTrigger className="w-full shrink-0 sm:w-[160px]" aria-label="Select month">

@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ShipmentsRouteImport } from './routes/shipments'
 import { Route as RiskAnalysisRouteImport } from './routes/risk-analysis'
+import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as InventoryRouteImport } from './routes/inventory'
 import { Route as ForecastingRouteImport } from './routes/forecasting'
 import { Route as AiAssistantRouteImport } from './routes/ai-assistant'
@@ -24,6 +25,11 @@ const ShipmentsRoute = ShipmentsRouteImport.update({
 const RiskAnalysisRoute = RiskAnalysisRouteImport.update({
   id: '/risk-analysis',
   path: '/risk-analysis',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfileRoute = ProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
   getParentRoute: () => rootRouteImport,
 } as any)
 const InventoryRoute = InventoryRouteImport.update({
@@ -52,6 +58,7 @@ export interface FileRoutesByFullPath {
   '/ai-assistant': typeof AiAssistantRoute
   '/forecasting': typeof ForecastingRoute
   '/inventory': typeof InventoryRoute
+  '/profile': typeof ProfileRoute
   '/risk-analysis': typeof RiskAnalysisRoute
   '/shipments': typeof ShipmentsRoute
 }
@@ -60,6 +67,7 @@ export interface FileRoutesByTo {
   '/ai-assistant': typeof AiAssistantRoute
   '/forecasting': typeof ForecastingRoute
   '/inventory': typeof InventoryRoute
+  '/profile': typeof ProfileRoute
   '/risk-analysis': typeof RiskAnalysisRoute
   '/shipments': typeof ShipmentsRoute
 }
@@ -69,6 +77,7 @@ export interface FileRoutesById {
   '/ai-assistant': typeof AiAssistantRoute
   '/forecasting': typeof ForecastingRoute
   '/inventory': typeof InventoryRoute
+  '/profile': typeof ProfileRoute
   '/risk-analysis': typeof RiskAnalysisRoute
   '/shipments': typeof ShipmentsRoute
 }
@@ -79,6 +88,7 @@ export interface FileRouteTypes {
     | '/ai-assistant'
     | '/forecasting'
     | '/inventory'
+    | '/profile'
     | '/risk-analysis'
     | '/shipments'
   fileRoutesByTo: FileRoutesByTo
@@ -87,6 +97,7 @@ export interface FileRouteTypes {
     | '/ai-assistant'
     | '/forecasting'
     | '/inventory'
+    | '/profile'
     | '/risk-analysis'
     | '/shipments'
   id:
@@ -95,6 +106,7 @@ export interface FileRouteTypes {
     | '/ai-assistant'
     | '/forecasting'
     | '/inventory'
+    | '/profile'
     | '/risk-analysis'
     | '/shipments'
   fileRoutesById: FileRoutesById
@@ -104,6 +116,7 @@ export interface RootRouteChildren {
   AiAssistantRoute: typeof AiAssistantRoute
   ForecastingRoute: typeof ForecastingRoute
   InventoryRoute: typeof InventoryRoute
+  ProfileRoute: typeof ProfileRoute
   RiskAnalysisRoute: typeof RiskAnalysisRoute
   ShipmentsRoute: typeof ShipmentsRoute
 }
@@ -122,6 +135,13 @@ declare module '@tanstack/react-router' {
       path: '/risk-analysis'
       fullPath: '/risk-analysis'
       preLoaderRoute: typeof RiskAnalysisRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/profile': {
+      id: '/profile'
+      path: '/profile'
+      fullPath: '/profile'
+      preLoaderRoute: typeof ProfileRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/inventory': {
@@ -160,6 +180,7 @@ const rootRouteChildren: RootRouteChildren = {
   AiAssistantRoute: AiAssistantRoute,
   ForecastingRoute: ForecastingRoute,
   InventoryRoute: InventoryRoute,
+  ProfileRoute: ProfileRoute,
   RiskAnalysisRoute: RiskAnalysisRoute,
   ShipmentsRoute: ShipmentsRoute,
 }
