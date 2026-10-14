@@ -1,4 +1,4 @@
-"""Ollama-only answer generation for the RIMS RAG assistant."""
+"""Grounded, operations-safe answer generation for the RIMS RAG assistant."""
 
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -49,14 +49,14 @@ class AIHandler:
 
         try:
             response = self.ollama.chat(
-                self._build_system_prompt(grounded),
+                self._build_system_prompt(grounded, self._is_emergency_query(query)),
                 self._build_user_prompt(query, context or []),
                 temperature=0.2,
                 max_tokens=max_tokens,
             )
             if response:
                 return {
-                    "response": self._ensure_summary(response),
+                    "response": self._ensure_response_format(response),
                     "confidence": confidence,
                     "provider": "ollama",
                     "model": self.ollama.model,
@@ -76,8 +76,17 @@ class AIHandler:
     def get_status(self) -> Dict[str, Any]:
         return {"provider": "ollama", "generation": self.ollama.get_status()}
 
-    def _build_system_prompt(self, grounded: bool) -> str:
+    def _build_system_prompt(self, grounded: bool, emergency: bool) -> str:
         if grounded:
+            emergency_rules = (
+                "\n\nThis is an emergency-sensitive operations question. Lead with the verified "
+                "condition, scope, and impact from the records. Then give a numbered 'Immediate "
+                "actions' list only when the records explicitly support those actions. If no "
+                "escalation owner, threshold, or procedure is in the records, say that it is not "
+                "specified; do not invent a runbook or claim the situation is safe."
+                if emergency
+                else ""
+            )
             return (
                 "You are RIMS, a supply-chain analytics assistant. Answer ONLY from the "
                 "retrieved records supplied by the user. Do not use outside knowledge or "
@@ -86,13 +95,16 @@ class AIHandler:
                 "name the missing data. Cite every factual claim with [Record N].\n\n"
                 "Use this Markdown response structure exactly, in this order:\n"
                 "## Detailed answer\n"
-                "Give the full explanation first: 2-4 sentences, followed by useful evidence "
-                "bullets with record values and citations. This is the only detailed section.\n\n"
+                "Give the full explanation first. Synthesize the relevant top records, explain "
+                "the evidence and uncertainty, then include useful evidence bullets. Cite every "
+                "factual claim with [Record N]. Do not treat a single chunk as a complete data set.\n\n"
                 "### Summary\n"
-                "- End with exactly 1-2 short takeaway bullets (maximum 25 words total).\n"
-                "- Do not repeat the detailed evidence, list record fields, or add new facts here.\n\n"
+                "- End with 2-4 short operational takeaway bullets.\n"
+                "- Do not repeat detailed evidence or introduce facts not stated above.\n\n"
                 "Omit a section only when the records cannot support it. Never add facts, "
-                "calculations, forecasts, or recommendations that are not supported by the records."
+                "calculations, forecasts, recommendations, owners, or deadlines that are not "
+                "supported by the records."
+                + emergency_rules
             )
         return (
             "You are RIMS, a supply-chain analytics assistant. No relevant internal records "
@@ -112,17 +124,21 @@ class AIHandler:
 
     @staticmethod
     def _format_context(context: List[Dict[str, Any]]) -> str:
-        # Keep the prompt small enough for gemma:2b while preserving the best evidence.
+        # Reserve comparable space for each top-K chunk so one long match cannot
+        # crowd out the rest of the retrieved evidence.
         sections: List[str] = []
-        remaining = 12_000
+        total_budget = 12_000
+        per_record_budget = max(1_000, total_budget // max(1, len(context)))
+        remaining = total_budget
         for index, document in enumerate(context, 1):
             content = str(document.get("content", "")).strip()
             if not content or remaining <= 0:
                 continue
             source = str(document.get("source", "Knowledge Base"))
+            allowed = min(per_record_budget, remaining)
             section = f"[Record {index} | Source: {source}]\n{content}"
-            if len(section) > remaining:
-                section = section[:remaining].rsplit(" ", 1)[0] + "…"
+            if len(section) > allowed:
+                section = section[:allowed].rsplit(" ", 1)[0] + "…"
             sections.append(section)
             remaining -= len(section)
         return "\n\n---\n\n".join(sections)
@@ -135,14 +151,26 @@ class AIHandler:
         return round(max(0.0, min(average, 1.0)), 2)
 
     @staticmethod
-    def _ensure_summary(response: str) -> str:
-        """Guarantee a compact final summary when gemma omits the requested heading."""
-        if "summary" in response.lower():
-            return response
+    def _is_emergency_query(query: str) -> bool:
+        terms = {
+            "emergency", "urgent", "critical", "severe", "incident", "outage",
+            "stockout", "stock out", "blocked", "failure", "disruption", "delay",
+        }
+        normalized = query.lower()
+        return any(term in normalized for term in terms)
 
-        for line in response.splitlines():
+    @staticmethod
+    def _ensure_response_format(response: str) -> str:
+        """Guarantee detailed-answer then concise-summary ordering for small local models."""
+        formatted = response.strip()
+        if not formatted.lower().startswith("## detailed answer"):
+            formatted = f"## Detailed answer\n{formatted}"
+        if "summary" in formatted.lower():
+            return formatted
+
+        for line in formatted.splitlines():
             candidate = line.strip().lstrip("- ")
             if candidate and not candidate.startswith("#"):
                 summary = " ".join(candidate.split()[:25])
-                return f"{response.rstrip()}\n\n### Summary\n- {summary}"
-        return f"{response.rstrip()}\n\n### Summary\n- No concise summary was generated."
+                return f"{formatted}\n\n### Summary\n- {summary}"
+        return f"{formatted}\n\n### Summary\n- No concise summary was generated."

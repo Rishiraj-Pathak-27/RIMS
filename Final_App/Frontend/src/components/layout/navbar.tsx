@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { Bell, Menu, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -36,7 +37,11 @@ export function Navbar() {
             <Bell className="h-4 w-4" />
             <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-destructive" />
           </button>
-          <div className="flex items-center gap-2 border-l border-border/80 pl-3">
+          <Link
+            to="/profile"
+            className="flex items-center gap-2 rounded-md border-l border-border/80 pl-3 transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            aria-label="Open Alex Kim's profile"
+          >
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
               AK
             </div>
@@ -44,7 +49,7 @@ export function Navbar() {
               <p className="text-xs font-semibold text-foreground">Alex Kim</p>
               <p className="text-[11px] text-muted-foreground">Operations</p>
             </div>
-          </div>
+          </Link>
         </div>
       </header>
 

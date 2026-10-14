@@ -17,7 +17,7 @@ const greeting: ChatMessage = {
   role: "assistant",
   createdAt: new Date().toISOString(),
   content:
-    "Hi — I'm your supply chain copilot. Ask me about forecasts, inventory, supplier risk, or shipments.",
+    "Hi — I answer from retrieved operational records. Ask about forecasts, inventory, supplier risk, or shipments; include a SKU, site, or timeframe for the strongest result.",
 };
 
 export const useChatbotStore = create<ChatbotState>((set, get) => ({

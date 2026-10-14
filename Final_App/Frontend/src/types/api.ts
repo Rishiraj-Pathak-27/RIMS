@@ -36,7 +36,7 @@ export interface MonthLogisticsEntry {
   label: string;
   slices: LogisticsSlice[];
   footerInsight: string;
-  source?: "historical" | "sample" | "live";
+  source?: "databricks" | "historical" | "sample" | "live" | "fallback";
 }
 
 export interface MonthlyLogisticsResponse {

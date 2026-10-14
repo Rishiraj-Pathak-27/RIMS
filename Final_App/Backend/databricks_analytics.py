@@ -78,6 +78,28 @@ def _parse_month_id(month_id: str | None) -> datetime | None:
     return None
 
 
+def _month_where_clause(month_id: str | None, column: str = "order_date") -> str:
+    """Return a safe, half-open SQL range for a dashboard month selection."""
+    month_start = _parse_month_id(month_id)
+    if month_start is None:
+        return ""
+
+    if month_start.month == 12:
+        next_month = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month = month_start.replace(month=month_start.month + 1)
+    return (
+        f" AND {column} >= DATE '{month_start:%Y-%m-%d}'"
+        f" AND {column} < DATE '{next_month:%Y-%m-%d}'"
+    )
+
+
+def _historical_date_column(month_id: str | None = None) -> str:
+    """Map legacy orders and the 2024 upload to their respective date fields."""
+    selected_month = _parse_month_id(month_id)
+    return "date" if selected_month and selected_month.year >= 2024 else "order_date"
+
+
 def _filter_local_gold_month_frame(month_id: str | None) -> pd.DataFrame | None:
     frame = _load_local_historical_gold_dataframe()
     month_start = _parse_month_id(month_id)
@@ -427,12 +449,15 @@ def _call_databricks(builder: Callable[[], Any], fallback_fn: Callable[[], Any] 
         raise HTTPException(status_code=502, detail=f"Databricks query failed: {exc}") from exc
 
 
-def _build_historical_dashboard_summary(table: str) -> dict[str, Any]:
+def _build_historical_dashboard_summary(table: str, month_id: str | None = None) -> dict[str, Any]:
     """Build the overview from the supplied consolidated Gold data.
 
     The real-time dashboard data continues to arrive only through the existing
     SSE pipeline; these values are a cached, read-only historical layer.
     """
+    date_column = _historical_date_column(month_id)
+    month_filter = _month_where_clause(month_id, date_column)
+    cache_suffix = _parse_month_id(month_id).strftime("%Y-%m") if _parse_month_id(month_id) else "all"
     row = _first(_query(f"""
         SELECT
           COUNT(*) AS shipments,
@@ -441,19 +466,21 @@ def _build_historical_dashboard_summary(table: str) -> dict[str, Any]:
           100 - LEAST(100, AVG(ABS(COALESCE(sales, 0) - COALESCE(avg_order_value_30d, 0)) / NULLIF(ABS(sales), 0)) * 100) AS forecast_accuracy,
           AVG(COALESCE(avg_shipping_cost, 0)) AS cost_per_order,
           SUM(CASE WHEN COALESCE(profit, 0) < 0 THEN 1 ELSE 0 END) AS loss_orders,
-          MAX(order_date) AS latest_order_date
+          MAX({date_column}) AS latest_order_date
         FROM {table}
-    """, "historical-gold-summary"))
+        WHERE {date_column} IS NOT NULL{month_filter}
+    """, f"historical-gold-summary:{cache_suffix}"))
     late = _int(row.get("late_shipments"))
     losses = _int(row.get("loss_orders"))
     by_mode = _query(f"""
         SELECT COALESCE(shipping_mode, 'Unknown mode') AS mode, COUNT(*) AS orders,
           AVG(CASE WHEN COALESCE(is_late_delivery, 0) = 1 THEN 1.0 ELSE 0.0 END) * 100 AS late_pct
         FROM {table}
+        WHERE {date_column} IS NOT NULL{month_filter}
         GROUP BY shipping_mode
         ORDER BY late_pct DESC
         LIMIT 4
-    """, "historical-gold-activity")
+    """, f"historical-gold-activity:{cache_suffix}")
     return {
         "kpiMetrics": [
             {"id": "k1", "label": "On-Time Delivery", "value": _pct(row.get("on_time_pct")), "delta": 0, "trend": "flat", "hint": "Historical Gold data"},
@@ -819,13 +846,13 @@ def build_shipment_stats() -> list[dict[str, Any]]:
 
 
 def build_dashboard_summary(month_id: str | None = None) -> dict[str, Any]:
+    historical = _historical_gold_table()
+    if historical:
+        return _build_historical_dashboard_summary(historical, month_id)
+
     frame = _filter_local_gold_month_frame(month_id)
     if frame is not None:
         return _build_summary_from_frame(frame, frame["order_date"].dt.strftime("%B %Y").iloc[0])
-
-    historical = _historical_gold_table()
-    if historical:
-        return _build_historical_dashboard_summary(historical)
     return {
         "kpiMetrics": build_kpi_metrics(),
         "activityFeed": build_activity_feed(),
@@ -913,13 +940,32 @@ def _april_2026_live_ingestion_logistics() -> dict[str, Any]:
 
 def build_monthly_logistics() -> dict[str, Any]:
     delivery = _historical_gold_table() or _delivery_table()
+    if _historical_gold_table():
+        date_source = f"""
+          SELECT order_date AS dashboard_date, is_late_delivery, shipment_date, lead_time,
+            avg_lead_time_by_mode, profit
+          FROM {delivery}
+          WHERE order_date IS NOT NULL
+          UNION ALL
+          SELECT date AS dashboard_date, is_late_delivery, shipment_date, lead_time,
+            avg_lead_time_by_mode, profit
+          FROM {delivery}
+          WHERE date IS NOT NULL
+        """
+    else:
+        date_source = f"""
+          SELECT order_date AS dashboard_date, is_late_delivery, shipment_date, lead_time,
+            avg_lead_time_by_mode, profit
+          FROM {delivery}
+          WHERE order_date IS NOT NULL
+        """
     rows = _query(
         f"""
         WITH monthly AS (
           SELECT
-            date_trunc('month', order_date) AS month_start,
-            LOWER(date_format(date_trunc('month', order_date), 'MMM-yyyy')) AS id,
-            date_format(date_trunc('month', order_date), 'MMMM yyyy') AS label,
+            date_trunc('month', dashboard_date) AS month_start,
+            LOWER(date_format(date_trunc('month', dashboard_date), 'MMM-yyyy')) AS id,
+            date_format(date_trunc('month', dashboard_date), 'MMMM yyyy') AS label,
             SUM(CASE WHEN COALESCE(is_late_delivery, 0) = 0 THEN 1 ELSE 0 END) AS delivered,
             SUM(CASE WHEN shipment_date > CURRENT_DATE() THEN 1 ELSE 0 END) AS in_transit,
             SUM(CASE WHEN COALESCE(is_late_delivery, 0) = 1 THEN 1 ELSE 0 END) AS delayed,
@@ -931,9 +977,8 @@ def build_monthly_logistics() -> dict[str, Any]:
               END
             ) AS at_risk,
             SUM(CASE WHEN COALESCE(profit, 0) < 0 THEN 1 ELSE 0 END) AS returned
-          FROM {delivery}
-          WHERE order_date IS NOT NULL
-          GROUP BY date_trunc('month', order_date)
+          FROM ({date_source}) dated_records
+          GROUP BY date_trunc('month', dashboard_date)
         )
         SELECT *
         FROM monthly
@@ -952,6 +997,7 @@ def build_monthly_logistics() -> dict[str, Any]:
         by_month[month_id] = {
             "id": month_id,
             "label": row.get("label") or month_id,
+            "source": "databricks",
             "footerInsight": f"{delivered:,} delivered, {delayed:,} late, {at_risk:,} at risk in Gold delivery data.",
             "slices": [
                 {
@@ -986,21 +1032,23 @@ def build_monthly_logistics() -> dict[str, Any]:
                 },
             ],
         }
-    march = _march_2026_live_ingestion_logistics()
-    april = _april_2026_live_ingestion_logistics()
     return {
-        "monthOrder": [march["id"], april["id"], *month_order],
-        "byMonth": {march["id"]: march, april["id"]: april, **by_month},
+        "monthOrder": month_order,
+        "byMonth": by_month,
     }
 
 
-def _build_historical_demand_intelligence(table: str) -> dict[str, Any]:
+def _build_historical_demand_intelligence(table: str, month_id: str | None = None) -> dict[str, Any]:
+    date_column = _historical_date_column(month_id)
+    month_filter = _month_where_clause(month_id, date_column)
+    cache_suffix = _parse_month_id(month_id).strftime("%Y-%m") if _parse_month_id(month_id) else "all"
     rows = _query(f"""
         WITH weekly AS (
-          SELECT date_trunc('week', order_date) AS week_start, SUM(COALESCE(quantity, 0)) AS actual
+          SELECT date_trunc('week', {date_column}) AS week_start,
+            SUM(COALESCE(units_sold, quantity, 0)) AS actual
           FROM {table}
-          WHERE order_date IS NOT NULL
-          GROUP BY date_trunc('week', order_date)
+          WHERE {date_column} IS NOT NULL{month_filter}
+          GROUP BY date_trunc('week', {date_column})
         ), ranked AS (
           SELECT week_start, actual,
             COALESCE(LAG(actual, 1) OVER (ORDER BY week_start), actual) AS lag1,
@@ -1018,7 +1066,7 @@ def _build_historical_demand_intelligence(table: str) -> dict[str, Any]:
           GREATEST(0, forecast - GREATEST(ABS(actual - forecast), ABS(forecast) * 0.08)) AS lower
         FROM latest
         ORDER BY week_start ASC
-    """, "historical-gold-demand-forecast")
+    """, f"historical-gold-demand-forecast:{cache_suffix}")
     forecast_series = [
         {"period": row.get("period") or f"Week {index + 1}", "actual": _int(row.get("actual")),
          "forecast": _int(row.get("forecast")), "upper": _int(row.get("upper")), "lower": _int(row.get("lower"))}
@@ -1075,13 +1123,13 @@ def _build_historical_demand_intelligence(table: str) -> dict[str, Any]:
 
 
 def build_demand_intelligence(month_id: str | None = None) -> dict[str, Any]:
+    historical = _historical_gold_table()
+    if historical:
+        return _build_historical_demand_intelligence(historical, month_id)
+
     frame = _filter_local_gold_month_frame(month_id)
     if frame is not None:
         return _build_demand_from_frame(frame, frame["order_date"].dt.strftime("%B %Y").iloc[0])
-
-    historical = _historical_gold_table()
-    if historical:
-        return _build_historical_demand_intelligence(historical)
     inventory = _inventory_table()
     forecast_rows = _query(
         f"""
@@ -1729,6 +1777,7 @@ def build_monthly_logistics_fallback() -> dict[str, Any]:
                 by_month[month_id] = {
                     "id": month_id,
                     "label": month_start.strftime("%B %Y"),
+                    "source": "fallback",
                     "footerInsight": (
                         f"{delivered:,} delivered, {delayed:,} late, {at_risk:,} at risk in the merged Gold CSV."
                     ),
@@ -1930,7 +1979,7 @@ def build_shipments_fallback() -> dict[str, Any]:
 
 @analytics_router.get("/api/databricks-status")
 async def databricks_status():
-    def builder() -> dict[str, str]:
+    def builder() -> dict[str, Any]:
         row = _first(
             get_databricks_client().query(
                 "SELECT 1 AS ok",
@@ -1938,10 +1987,24 @@ async def databricks_status():
                 ttl_seconds=30,
             )
         )
-        return {"status": "connected" if row.get("ok") == 1 else "unknown"}
+        historical_table = _historical_gold_table()
+        if not historical_table:
+            return {"status": "connected" if row.get("ok") == 1 else "unknown", "historicalTable": None}
 
-    def fallback() -> dict[str, str]:
-        return {"status": "disconnected"}
+        table_row = _first(_query(f"""
+            SELECT COUNT(*) AS row_count, MAX({_historical_date_column()}) AS latest_order_date
+            FROM {historical_table}
+            WHERE {_historical_date_column()} IS NOT NULL
+        """, "historical-gold-status"))
+        return {
+            "status": "connected" if row.get("ok") == 1 else "unknown",
+            "historicalTable": historical_table,
+            "rowCount": _int(table_row.get("row_count")),
+            "latestOrderDate": table_row.get("latest_order_date"),
+        }
+
+    def fallback() -> dict[str, Any]:
+        return {"status": "disconnected", "historicalTable": None}
 
     return await run_in_threadpool(lambda: _call_databricks(builder, fallback))
 
